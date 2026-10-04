@@ -3,7 +3,7 @@
 即売会で頒布物の売れた数・在庫・売上を正確に記録するための簡易POSです。
 ブラウザだけで動作し、サーバーやアカウントは不要です。データは端末内にのみ保存され、電波がなくても使えます。
 
-**公開URL**: https://bcno01.github.io/hanpu-pos/(GitHub Pages 設定後)
+**公開URL**: https://bcno01.github.io/hanpu-pos/
 
 ## 主な機能
 
