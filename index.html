@@ -1,0 +1,1259 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>頒布レジ</title>
+<link rel="manifest" href="manifest.json" />
+<link rel="icon" href="icons/icon-192.png" />
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+<meta name="color-scheme" content="light dark" />
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+<meta name="theme-color" content="#1d2025" media="(prefers-color-scheme: dark)" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-title" content="頒布レジ" />
+<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+<style>
+  :root {
+    color-scheme: light dark; /* 既定は白基調。端末がダークモードのときだけ下のメディアクエリで暗くなる(標準部品も追従) */
+    --bg: #f5f3ee;
+    --card: #ffffff;
+    --text: #222421;
+    --dim: #7a7a72;
+    --line: #e2ded3;
+    --accent: #1f7a6d;
+    --accent-ink: #ffffff;
+    --accent-soft: #e3f1ee;
+    --danger: #c0392b;
+    --warn: #b9770e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a;
+      --card: #1d2025;
+      --text: #eceae4;
+      --dim: #9a9a92;
+      --line: #2d3138;
+      --accent: #3fb5a3;
+      --accent-ink: #06201c;
+      --accent-soft: #1b2e2b;
+      --danger: #ef6b5c;
+      --warn: #e0a23a;
+    }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    overscroll-behavior: none;
+    touch-action: manipulation;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  input, button, select, textarea { font: inherit; color: inherit; }
+  input[type=text], input[type=number], input:not([type]) {
+    -webkit-user-select: text; user-select: text;
+    width: 100%; font-size: 16px; padding: 10px 12px;
+    border: 1px solid var(--line); border-radius: 10px; background: var(--bg);
+  }
+  button { cursor: pointer; }
+
+  header {
+    padding: calc(env(safe-area-inset-top) + 8px) 16px 8px;
+    display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
+    border-bottom: 1px solid var(--line); background: var(--card); flex-shrink: 0;
+  }
+  header .ev { font-weight: 800; font-size: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  header .sum { font-size: 13px; color: var(--dim); white-space: nowrap; }
+  header .sum b { color: var(--text); font-size: 15px; }
+
+  main { flex: 1; overflow: auto; padding: 12px; -webkit-overflow-scrolling: touch; }
+
+  nav {
+    display: grid; grid-template-columns: repeat(4, 1fr); flex-shrink: 0;
+    border-top: 1px solid var(--line); background: var(--card);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  nav button { background: none; border: 0; padding: 13px 0; color: var(--dim); font-weight: 700; font-size: 14px; }
+  nav button.on { color: var(--accent); box-shadow: inset 0 3px 0 var(--accent); }
+
+  /* ボタン */
+  .btn {
+    border: 0; border-radius: 12px; padding: 12px 18px; font-weight: 700; font-size: 16px;
+    background: var(--accent); color: var(--accent-ink);
+  }
+  .btn:disabled { opacity: .35; }
+  .btn.sub { background: var(--bg); color: var(--text); border: 1px solid var(--line); }
+  .btn.danger { background: var(--danger); color: #fff; }
+  .btn.small { padding: 7px 12px; font-size: 14px; border-radius: 9px; }
+  .btn.block { display: block; width: 100%; }
+
+  /* レジ画面 */
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; padding-top: 6px; }
+  .prod {
+    position: relative; min-height: 98px; text-align: left;
+    border: 1px solid var(--line); background: var(--card); border-radius: 14px; padding: 10px 12px;
+    display: flex; flex-direction: column; justify-content: space-between; gap: 6px;
+  }
+  .prod:active { transform: scale(.97); }
+  .prod.in { border-color: var(--accent); box-shadow: inset 0 0 0 2px var(--accent); }
+  .prod.out { opacity: .55; }
+  .prod .pn { font-weight: 700; font-size: 16px; line-height: 1.3; word-break: break-word; }
+  .prod .pp { font-size: 19px; font-weight: 800; color: var(--accent); }
+  .prod .pr { font-size: 12px; color: var(--dim); }
+  .pr.low { color: var(--warn); font-weight: 700; }
+  .pr.zero { color: var(--danger); font-weight: 700; }
+  .badge {
+    position: absolute; top: -7px; right: -7px; min-width: 28px; height: 28px; padding: 0 7px;
+    border-radius: 14px; background: var(--accent); color: var(--accent-ink);
+    display: grid; place-items: center; font-weight: 800; font-size: 15px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.25);
+  }
+
+  #cart { flex-shrink: 0; border-top: 1px solid var(--line); background: var(--card); }
+  #cart[hidden] { display: none; }
+  .cart-lines { max-height: 28dvh; overflow: auto; padding: 6px 12px 0; }
+  .cl { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 15px; }
+  .cl .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cl .amt { min-width: 70px; text-align: right; font-variant-numeric: tabular-nums; }
+  .cl.disc { color: var(--accent); font-weight: 700; }
+  .step { display: inline-flex; align-items: center; }
+  .step button {
+    width: 34px; height: 34px; border-radius: 10px; font-size: 18px; font-weight: 700;
+    border: 1px solid var(--line); background: var(--bg);
+  }
+  .step span { min-width: 30px; text-align: center; font-weight: 800; }
+  .cart-foot { display: flex; align-items: center; gap: 10px; padding: 8px 12px; }
+  .cart-foot .total { flex: 1; font-size: 24px; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .cart-foot .total small { display: block; font-size: 11px; font-weight: 600; color: var(--dim); line-height: 1.2; }
+  .cart-foot .btn { white-space: nowrap; }
+  .cart-foot .btn.small { padding: 9px 10px; }
+  .cart-foot { gap: 8px; }
+  .cart-foot .pay { padding: 14px 20px; font-size: 18px; }
+
+  /* シート */
+  .backdrop {
+    position: fixed; inset: 0; z-index: 20; background: rgba(0,0,0,.45);
+    display: flex; align-items: flex-end; justify-content: center;
+  }
+  .sheet {
+    width: 100%; max-width: 560px; max-height: 92dvh; overflow: auto;
+    background: var(--card); border-radius: 18px 18px 0 0;
+    padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+  }
+  .sheet h2 { margin: 0 0 12px; font-size: 18px; }
+  .field { margin-bottom: 12px; }
+  .field label { display: block; font-size: 13px; color: var(--dim); margin-bottom: 4px; }
+  .field .hint { font-size: 12px; color: var(--dim); margin-top: 4px; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .row.wrap { flex-wrap: wrap; }
+  .row > .grow { flex: 1; min-width: 0; }
+  .actions { display: flex; gap: 8px; margin-top: 16px; }
+  .actions .btn { flex: 1; }
+  .big { font-size: 38px; font-weight: 800; text-align: center; font-variant-numeric: tabular-nums; }
+  .big.sm { font-size: 20px; }
+  .sub-note { text-align: center; color: var(--dim); font-size: 13px; min-height: 1.4em; }
+  .chg { text-align: center; font-size: 26px; font-weight: 800; color: var(--accent); margin: 6px 0; min-height: 1.4em; }
+  .chg.bad { color: var(--danger); }
+  .chip {
+    border: 1px solid var(--line); background: var(--bg); border-radius: 10px;
+    padding: 9px 12px; font-weight: 700; font-size: 15px;
+  }
+  .check { display: flex; align-items: center; gap: 10px; font-size: 15px; padding: 6px 0; }
+  .check input { width: 22px; height: 22px; accent-color: var(--accent); }
+
+  /* カード・リスト */
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px; margin-bottom: 12px; }
+  .card h3 { margin: 0 0 8px; font-size: 14px; color: var(--dim); font-weight: 700; }
+  .kpis { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 12px; }
+  .kpi { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; }
+  .kpi .k { font-size: 12px; color: var(--dim); }
+  .kpi .v { font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .kpi.wide { grid-column: span 2; background: var(--accent-soft); border-color: transparent; }
+  .kpi.wide .v { font-size: 30px; color: var(--accent); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { padding: 8px 4px; text-align: right; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+  th:first-child, td:first-child { text-align: left; }
+  th { font-size: 12px; color: var(--dim); font-weight: 700; }
+  tfoot td { font-weight: 800; border-bottom: 0; }
+  td.low { color: var(--warn); font-weight: 700; }
+  td.zero { color: var(--danger); font-weight: 700; }
+
+  .item { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .item:last-child { border-bottom: 0; }
+  .item .main { flex: 1; min-width: 0; }
+  .item .t { font-weight: 700; word-break: break-word; }
+  .item .d { font-size: 12px; color: var(--dim); margin-top: 2px; word-break: break-word; }
+  .item.void .t, .item.void .d { text-decoration: line-through; opacity: .5; }
+  .tag { font-size: 11px; padding: 2px 6px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); font-weight: 700; margin-left: 6px; }
+  .tag.gray { background: var(--bg); color: var(--dim); }
+
+  .empty { text-align: center; color: var(--dim); padding: 40px 12px; line-height: 1.8; }
+  .note { font-size: 12px; color: var(--dim); line-height: 1.6; }
+  .note.warn { color: var(--warn); }
+
+  /* 時間別の推移グラフ */
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .seg button { border: 0; background: var(--bg); padding: 7px 12px; font-size: 13px; font-weight: 700; color: var(--dim); }
+  .seg button.on { background: var(--accent); color: var(--accent-ink); }
+  .tc-wrap { position: relative; max-width: 480px; margin: 4px auto 0; }
+  .tc-wrap svg { display: block; width: 100%; height: auto; touch-action: pan-y; -webkit-user-select: none; user-select: none; }
+  .tc-wrap svg rect:focus { outline: none; }
+  .tc-grid { stroke: var(--line); stroke-width: 1; fill: none; }
+  .tc-tx { fill: var(--dim); font-size: 10.5px; }
+  .tc-val { fill: var(--text); font-size: 11px; font-weight: 800; pointer-events: none; }
+  .tc-bar { fill: var(--accent); }
+  .tc-bar.hot { filter: brightness(1.2); }
+  .tc-line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .tc-area { fill: var(--accent); fill-opacity: .1; }
+  .tc-dot { fill: var(--accent); stroke: var(--card); stroke-width: 2; }
+  .tc-cross { stroke: var(--dim); stroke-width: 1; }
+  .tc-tip {
+    position: absolute; top: 0; display: none; z-index: 2; pointer-events: none; white-space: nowrap;
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px;
+    box-shadow: 0 4px 14px rgba(0,0,0,.25); font-size: 12px;
+  }
+  .tc-tip .th { color: var(--dim); }
+  .tc-tip .tv { font-size: 18px; font-weight: 800; line-height: 1.3; }
+  .tc-tip .tk { display: inline-block; width: 12px; height: 2px; background: var(--accent); vertical-align: middle; margin-right: 6px; }
+  .tc-facts { font-size: 12px; color: var(--dim); line-height: 1.7; margin-top: 8px; }
+  details.tc-table { margin-top: 10px; }
+  details.tc-table summary { font-size: 13px; font-weight: 700; color: var(--dim); padding: 6px 0; }
+
+  /* QRスキャン */
+  #scanner { position: relative; flex-shrink: 0; height: 30dvh; min-height: 190px; background: #000; overflow: hidden; }
+  #scanner[hidden] { display: none; }
+  #scanner video { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .reticle { position: absolute; inset: 16% 22%; border: 3px solid rgba(255,255,255,.85); border-radius: 18px; box-shadow: 0 0 0 999px rgba(0,0,0,.28); pointer-events: none; }
+  .scan-hint { position: absolute; top: 10px; left: 12px; color: #fff; font-size: 12px; font-weight: 700; text-shadow: 0 1px 3px rgba(0,0,0,.8); }
+  .scan-bar { position: absolute; top: 6px; right: 8px; display: flex; gap: 8px; }
+  .scan-bar button { border: 0; border-radius: 9px; padding: 7px 12px; font-weight: 700; font-size: 13px; background: rgba(0,0,0,.6); color: #fff; }
+  .scan-msg {
+    position: absolute; left: 10px; right: 10px; bottom: 10px; padding: 10px 12px; border-radius: 12px;
+    font-weight: 800; font-size: 17px; text-align: center; color: #fff; background: rgba(0,0,0,.7); white-space: pre-line;
+    opacity: 0; transition: opacity .15s; pointer-events: none;
+  }
+  .scan-msg.show { opacity: 1; }
+  .scan-msg.ok { background: rgba(31,122,109,.96); }
+  .scan-msg.warn { background: rgba(185,119,14,.96); }
+  .scan-msg.bad { background: rgba(192,57,43,.96); }
+  .scan-start { margin-bottom: 12px; }
+
+  /* QRシート(印刷用。ダークモードでも必ず白地・黒) */
+  #qrSheet { position: fixed; inset: 0; z-index: 40; background: #fff; color: #000; overflow: auto; padding: calc(env(safe-area-inset-top) + 12px) 14px 28px; }
+  #qrSheet .qr-top { display: flex; gap: 8px; margin-bottom: 10px; }
+  #qrSheet .qr-note { font-size: 12px; color: #555; line-height: 1.6; margin-bottom: 12px; }
+  .qr-title { font-size: 13px; font-weight: 800; margin: 14px 0 6px; }
+  .qr-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; }
+  .qr-card { border: 1.5px solid #000; border-radius: 10px; padding: 10px; text-align: center; break-inside: avoid; background: #fff; }
+  .qr-card svg { width: 100%; height: auto; display: block; }
+  .qr-card .qn { font-weight: 800; margin-top: 6px; font-size: 15px; word-break: break-word; }
+  .qr-card .qp { font-size: 14px; }
+  .qr-card .qc { font-size: 11px; color: #555; }
+  @media print {
+    body { display: block; height: auto; background: #fff; }
+    body > *:not(#qrSheet) { display: none !important; }
+    #qrSheet { position: static; overflow: visible; padding: 0; }
+    #qrSheet .noprint { display: none !important; }
+    .qr-grid { grid-template-columns: repeat(3, 1fr); gap: 8mm; }
+    @page { margin: 12mm; }
+  }
+
+  #toast {
+    position: fixed; left: 12px; right: 12px; bottom: calc(80px + env(safe-area-inset-bottom)); z-index: 30;
+    max-width: 520px; margin: 0 auto;
+    background: #26292e; color: #fff; border-radius: 12px; padding: 12px 14px;
+    display: flex; align-items: center; gap: 10px; font-size: 14px;
+    box-shadow: 0 6px 20px rgba(0,0,0,.35);
+    transition: opacity .2s, transform .2s;
+  }
+  #toast[hidden] { display: none; }
+  #toast span { flex: 1; }
+  #toast button { background: none; border: 1px solid rgba(255,255,255,.5); color: #fff; border-radius: 8px; padding: 6px 10px; font-weight: 700; }
+</style>
+</head>
+<body>
+<header>
+  <div class="ev" id="hEvent"></div>
+  <div class="sum" id="hSum"></div>
+</header>
+<div id="scanner" hidden>
+  <video id="scanVideo" playsinline muted></video>
+  <div class="reticle"></div>
+  <div class="scan-hint">QRをかざす</div>
+  <div class="scan-bar">
+    <button id="scanSound" type="button"></button>
+    <button id="scanClose" type="button">閉じる</button>
+  </div>
+  <div class="scan-msg" id="scanMsg"></div>
+</div>
+<main id="view"></main>
+<div id="cart" hidden></div>
+<nav id="tabs"></nav>
+<div id="sheetRoot"></div>
+<div id="toast" hidden></div>
+
+<script>
+'use strict';
+
+/* ============ 状態と保存 ============ */
+const KEY = 'hanpu-pos-v1';
+const PREV = KEY + '-prev'; // 直前の保存内容(本体が壊れたときの保険)
+
+function defaultState() {
+  return { v: 1, eventName: '', products: [], sets: [], sales: [], cart: {}, lastBackup: null, wake: false, beep: true, codeSeq: 0 };
+}
+// QR用の商品コード(P01, P02, ...)。連番は増える一方で、削除した商品のコードは再利用しない
+// (印刷済みの古いQRが別の商品として読まれる事故を防ぐ)
+let migrated = false;
+function nextCode(st) {
+  st.codeSeq = (st.codeSeq || 0) + 1;
+  return 'P' + String(st.codeSeq).padStart(2, '0');
+}
+function ensureCodes(st) {
+  const used = st.products.map(p => /^P(\d+)$/.exec(p.code || '')).filter(Boolean).map(m => parseInt(m[1], 10));
+  st.codeSeq = Math.max(st.codeSeq || 0, ...used);
+  st.products.forEach(p => { if (!p.code) { p.code = nextCode(st); migrated = true; } });
+}
+function normalize(o) {
+  const d = defaultState();
+  if (!o || typeof o !== 'object') return d;
+  const st = Object.assign(d, o, {
+    products: Array.isArray(o.products) ? o.products : [],
+    sets: Array.isArray(o.sets) ? o.sets : [],
+    sales: Array.isArray(o.sales) ? o.sales : [],
+    cart: o.cart && typeof o.cart === 'object' ? o.cart : {},
+  });
+  ensureCodes(st);
+  return st;
+}
+let recovered = false;
+function load() {
+  for (const k of [KEY, PREV]) {
+    try {
+      const t = localStorage.getItem(k);
+      if (t) { if (k === PREV) recovered = true; return normalize(JSON.parse(t)); }
+    } catch (e) { /* 次の候補へ */ }
+  }
+  return defaultState();
+}
+let S = load();
+let saveFailed = false;
+if (migrated) { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} } // 旧データへのコード付与を保存(PREVは触らない)
+function save() {
+  try {
+    S.cartOrder = cartOrder;
+    const cur = localStorage.getItem(KEY);
+    const next = JSON.stringify(S);
+    if (cur) { try { localStorage.setItem(PREV, cur); } catch (e) {} }
+    localStorage.setItem(KEY, next);
+    saveFailed = false;
+  } catch (e) {
+    if (!saveFailed) toast('保存に失敗しました。今すぐバックアップを書き出してください');
+    saveFailed = true;
+  }
+}
+let persisted = null;
+try { navigator.storage && navigator.storage.persist && navigator.storage.persist().then(ok => { persisted = ok; }); } catch (e) {}
+
+/* ============ ユーティリティ ============ */
+function h(tag, attrs, ...kids) {
+  const el = document.createElement(tag);
+  if (attrs) for (const [k, v] of Object.entries(attrs)) {
+    if (v == null || v === false) continue;
+    if (k === 'class') el.className = v;
+    else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+    else if (k === 'text') el.textContent = v;
+    else if (k in el) el[k] = v;
+    else el.setAttribute(k, v === true ? '' : v);
+  }
+  for (const c of kids.flat()) {
+    if (c == null || c === false) continue;
+    el.append(c.nodeType ? c : document.createTextNode(String(c)));
+  }
+  return el;
+}
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+const yen = n => (n < 0 ? '−¥' : '¥') + Math.abs(Number(n)).toLocaleString('ja-JP');
+const num = v => { const n = parseInt(String(v).replace(/[^\d-]/g, ''), 10); return isNaN(n) ? null : n; };
+const pad = n => String(n).padStart(2, '0');
+const fmtTime = ts => { const d = new Date(ts); return pad(d.getHours()) + ':' + pad(d.getMinutes()); };
+const fmtDT = ts => { const d = new Date(ts); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; };
+const stamp = () => { const d = new Date(); return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`; };
+const prodById = id => S.products.find(p => p.id === id);
+
+let toastTimer = null;
+function toast(msg, label, fn) {
+  const t = $('#toast');
+  t.replaceChildren(h('span', { text: msg }));
+  if (label) t.append(h('button', { text: label, onclick: () => { hideToast(); fn(); } }));
+  t.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(hideToast, label ? 6000 : 3500);
+}
+function hideToast() { $('#toast').hidden = true; }
+function $(s) { return document.querySelector(s); }
+
+/* ============ 計算 ============ */
+// カートからセット割を自動適用して合計を出す(割引額が最大のセットから貪欲に適用)
+function calc(cart) {
+  const lines = [];
+  let subtotal = 0;
+  for (const [pid, qty] of Object.entries(cart)) {
+    const p = prodById(pid);
+    if (!p || qty <= 0) continue;
+    lines.push({ pid, name: p.name, qty, unit: p.price });
+    subtotal += p.price * qty;
+  }
+  const remain = {};
+  lines.forEach(l => { remain[l.pid] = l.qty; });
+  const applied = {};
+  for (let guard = 0; guard < 500; guard++) {
+    let best = null;
+    for (const s of S.sets) {
+      if (!s.items.length) continue;
+      if (!s.items.every(i => (remain[i.pid] || 0) >= i.qty)) continue;
+      const list = s.items.reduce((a, i) => a + (prodById(i.pid)?.price || 0) * i.qty, 0);
+      const disc = list - s.price;
+      if (disc > 0 && (!best || disc > best.disc)) best = { s, disc };
+    }
+    if (!best) break;
+    best.s.items.forEach(i => { remain[i.pid] -= i.qty; });
+    const a = applied[best.s.id] || (applied[best.s.id] = { sid: best.s.id, name: best.s.name, count: 0, each: best.disc });
+    a.count++;
+  }
+  const sets = Object.values(applied);
+  const discount = sets.reduce((a, s) => a + s.each * s.count, 0);
+  return { lines, sets, subtotal, discount, total: subtotal - discount };
+}
+
+// 取消以外の会計から、商品別の頒布数・献本数・売上を集計する
+function stats() {
+  const per = {};
+  const ensure = (pid, name) => per[pid] || (per[pid] = { name, sold: 0, gift: 0, gross: 0 });
+  S.products.forEach(p => ensure(p.id, p.name));
+  let revenue = 0, count = 0, discount = 0, sold = 0, gift = 0, giftCount = 0, voided = 0;
+  for (const s of S.sales) {
+    if (s.voided) { voided++; continue; }
+    for (const l of s.lines) {
+      const e = ensure(l.pid, l.name);
+      if (s.free) { e.gift += l.qty; gift += l.qty; }
+      else { e.sold += l.qty; e.gross += l.qty * l.unit; sold += l.qty; }
+    }
+    if (s.free) giftCount++;
+    else { revenue += s.total; discount += s.discount; count++; }
+  }
+  return { per, revenue, count, discount, sold, gift, giftCount, voided };
+}
+function remainingOf(p, st) {
+  if (p.stock == null) return null;
+  const e = st.per[p.id];
+  return p.stock - (e ? e.sold + e.gift : 0);
+}
+
+/* ============ カート操作 ============ */
+let tab = 'register';
+// 在庫切れのときは確認を挟む(スキャン経由は確認ダイアログで読み取りが止まるため、呼び出し側が警告を出す)
+function addToCart(pid, fromScan) {
+  const p = prodById(pid);
+  const st = stats();
+  const rem = remainingOf(p, st);
+  const inCart = S.cart[pid] || 0;
+  if (rem != null && rem - inCart <= 0 && !fromScan && !confirm(`「${p.name}」の在庫は残っていません。追加しますか?`)) return;
+  S.cart[pid] = inCart + 1;
+  cartOrder.push(pid);
+  save(); render();
+}
+// カートに入れた順(「1つ戻す」用)。スキャンでもタップでも積む。再読み込みしても続けられるよう save() で一緒に保存する
+let cartOrder = Array.isArray(S.cartOrder) ? S.cartOrder.filter(pid => S.cart[pid]) : [];
+function decCart(pid, keepOrder) {
+  if (!S.cart[pid]) return;
+  S.cart[pid]--;
+  if (S.cart[pid] <= 0) delete S.cart[pid];
+  if (!keepOrder) { const i = cartOrder.lastIndexOf(pid); if (i >= 0) cartOrder.splice(i, 1); }
+  save(); render();
+}
+function undoLast() {
+  while (cartOrder.length && !S.cart[cartOrder[cartOrder.length - 1]]) cartOrder.pop();
+  const pid = cartOrder.pop();
+  if (!pid) return;
+  decCart(pid, true);
+  toast(`「${prodById(pid).name}」を1つ戻しました`);
+}
+function clearCart() { S.cart = {}; cartOrder = []; save(); render(); }
+
+/* ============ シート(ボトムシート) ============ */
+function openSheet(title, ...content) {
+  const root = $('#sheetRoot');
+  const back = h('div', { class: 'backdrop', onclick: e => { if (e.target === back) close(); } },
+    h('div', { class: 'sheet' }, h('h2', { text: title }), content));
+  const close = () => back.remove();
+  root.append(back);
+  return close;
+}
+
+/* ============ 描画 ============ */
+const TABS = [['register', 'レジ'], ['history', '履歴'], ['stats', '集計'], ['settings', '設定']];
+function render() {
+  const st = stats();
+  $('#hEvent').textContent = S.eventName || '頒布レジ';
+  $('#hSum').replaceChildren('売上 ', h('b', { text: yen(st.revenue) }), ` / ${st.count}件`);
+  $('#tabs').replaceChildren(...TABS.map(([k, label]) =>
+    h('button', { class: tab === k ? 'on' : '', text: label, onclick: () => { if (tab !== k) { tab = k; hideToast(); if (k !== 'register') stopScan(); render(); $('#view').scrollTop = 0; } } })));
+  const view = $('#view');
+  const top = view.scrollTop;
+  view.replaceChildren(({ register: viewRegister, history: viewHistory, stats: viewStats, settings: viewSettings })[tab](st));
+  view.scrollTop = top;
+  renderCart();
+}
+
+function viewRegister(st) {
+  const vis = S.products.filter(p => !p.hidden);
+  if (!vis.length) {
+    return h('div', { class: 'empty' }, '商品がまだ登録されていません。', h('br'), '「設定」タブから頒布物を登録してください。', h('br'), h('br'),
+      h('button', { class: 'btn', text: '設定を開く', onclick: () => { tab = 'settings'; render(); } }));
+  }
+  const startBtn = scan.on ? null : h('button', { class: 'btn block scan-start', text: 'QRスキャンを開始', onclick: startScan });
+  return h('div', null, startBtn, h('div', { class: 'grid' }, vis.map(p => {
+    const q = S.cart[p.id] || 0;
+    const rem = remainingOf(p, st);
+    const left = rem == null ? null : rem - q;
+    return h('button', { class: 'prod' + (q ? ' in' : '') + (left != null && left <= 0 ? ' out' : ''), onclick: () => addToCart(p.id) },
+      h('span', { class: 'pn', text: p.name }),
+      h('span', { class: 'pp', text: yen(p.price) }),
+      left == null ? null : h('span', { class: 'pr' + (left <= 0 ? ' zero' : left <= 3 ? ' low' : ''), text: left === 0 ? '完売' : '残 ' + left }),
+      q ? h('span', { class: 'badge', text: q }) : null);
+  })));
+}
+
+function renderCart() {
+  const el = $('#cart');
+  const c = calc(S.cart);
+  if (tab !== 'register' || !c.lines.length) { el.hidden = true; el.replaceChildren(); return; }
+  el.hidden = false;
+  el.replaceChildren(
+    h('div', { class: 'cart-lines' },
+      c.lines.map(l => h('div', { class: 'cl' },
+        h('span', { class: 'nm', text: l.name }),
+        h('span', { class: 'step' },
+          h('button', { text: '−', onclick: () => decCart(l.pid) }),
+          h('span', { text: l.qty }),
+          h('button', { text: '+', onclick: () => addToCart(l.pid) })),
+        h('span', { class: 'amt', text: yen(l.unit * l.qty) }))),
+      c.sets.map(s => h('div', { class: 'cl disc' },
+        h('span', { class: 'nm', text: `セット割「${s.name}」${s.count > 1 ? '×' + s.count : ''}` }),
+        h('span', { class: 'amt', text: yen(-s.each * s.count) })))),
+    h('div', { class: 'cart-foot' },
+      h('button', { class: 'btn sub small', text: 'クリア', onclick: () => { if (confirm('カートを空にしますか?')) clearCart(); } }),
+      h('button', { class: 'btn sub small', text: '1つ戻す', disabled: !cartOrder.length, onclick: undoLast }),
+      h('div', { class: 'total' }, yen(c.total), c.discount ? h('small', { text: `(割引 ${yen(c.discount)})` }) : null),
+      h('button', { class: 'btn pay', text: '会計', onclick: openCheckout })));
+}
+
+/* ---- 会計 ---- */
+function openCheckout() {
+  const c = calc(S.cart);
+  if (!c.lines.length) return;
+  let free = false, received = null; // received が null = ちょうど
+  const payEl = h('div', { class: 'big' });
+  const subEl = h('div', { class: 'sub-note' });
+  const chgEl = h('div', { class: 'chg' });
+  const input = h('input', { type: 'number', inputMode: 'numeric', placeholder: '預かり金額(空欄 = ちょうど)',
+    oninput: () => { received = input.value === '' ? null : num(input.value); update(); } });
+  const payGroup = h('div', { class: 'field' },
+    h('label', { text: '預かり' }), input,
+    h('div', { class: 'row wrap', style: 'margin-top:8px' },
+      h('button', { class: 'chip', text: 'ちょうど', onclick: () => setRec(null) }),
+      [500, 1000, 5000, 10000].map(v => h('button', { class: 'chip', text: yen(v), onclick: () => setRec(v) }))));
+  const ok = h('button', { class: 'btn', text: '確定', onclick: confirmSale });
+  function setRec(v) { received = v; input.value = v == null ? '' : v; update(); }
+  function pay() { return free ? 0 : c.total; }
+  function update() {
+    const p = pay();
+    payEl.textContent = yen(p);
+    subEl.textContent = free ? '献本(売上に含めず、在庫だけ減らします)' : c.discount ? `小計 ${yen(c.subtotal)} − セット割 ${yen(c.discount)}` : '';
+    payGroup.style.display = free || p === 0 ? 'none' : '';
+    const rec = received == null ? p : received;
+    const good = rec >= p;
+    chgEl.className = 'chg' + (good ? '' : ' bad');
+    chgEl.textContent = free || p === 0 ? '' : good ? `お釣り ${yen(rec - p)}` : `不足 ${yen(p - rec)}`;
+    ok.disabled = !good;
+  }
+  function confirmSale() {
+    const p = pay();
+    const rec = received == null ? p : received;
+    if (rec < p) return;
+    const no = S.sales.reduce((m, s) => Math.max(m, s.no || 0), 0) + 1;
+    const sale = {
+      id: uid(), no, ts: Date.now(),
+      lines: c.lines.map(l => ({ pid: l.pid, name: l.name, qty: l.qty, unit: l.unit })),
+      sets: free ? [] : c.sets,
+      subtotal: c.subtotal, discount: free ? 0 : c.discount, total: p,
+      received: free ? 0 : rec, change: free ? 0 : rec - p, free, voided: false,
+    };
+    S.sales.push(sale);
+    S.cart = {};
+    cartOrder = [];
+    save(); close(); render();
+    toast(`#${no} を記録しました(${free ? '献本' : yen(p)})`, '取り消す', () => setVoid(sale.id, true));
+  }
+  const close = openSheet('会計',
+    payEl, subEl, chgEl,
+    h('label', { class: 'check' }, h('input', { type: 'checkbox', onchange: e => { free = e.target.checked; update(); } }), '献本・無料配布として記録する'),
+    payGroup,
+    h('div', { class: 'actions' }, h('button', { class: 'btn sub', text: '戻る', onclick: () => close() }), ok));
+  update();
+}
+function setVoid(id, v) {
+  const s = S.sales.find(x => x.id === id);
+  if (!s) return;
+  s.voided = v;
+  save(); render();
+}
+
+/* ---- 履歴 ---- */
+function saleSummary(s) {
+  return s.lines.map(l => `${l.name}×${l.qty}`).join(' / ');
+}
+function viewHistory(st) {
+  if (!S.sales.length) return h('div', { class: 'empty', text: 'まだ会計がありません。' });
+  const list = S.sales.slice().reverse();
+  return h('div', null,
+    h('div', { class: 'note', style: 'margin:0 4px 8px', text: `全${S.sales.length}件(取消 ${st.voided}件)` }),
+    h('div', { class: 'card' }, list.map(s => h('div', { class: 'item' + (s.voided ? ' void' : '') },
+      h('div', { class: 'main' },
+        h('div', { class: 't' }, `#${s.no}  ${fmtTime(s.ts)}  `, h('b', { text: s.free ? '献本' : yen(s.total) }),
+          s.free ? h('span', { class: 'tag gray', text: '無料' }) : null,
+          s.voided ? h('span', { class: 'tag gray', text: '取消済' }) : null),
+        h('div', { class: 'd', text: saleSummary(s) }),
+        (s.sets && s.sets.length) || (!s.free && s.change > 0) ? h('div', { class: 'd', text:
+          [...(s.sets || []).map(x => `セット割「${x.name}」×${x.count}`), !s.free && s.change > 0 ? `預かり ${yen(s.received)} / お釣り ${yen(s.change)}` : ''].filter(Boolean).join(' ・ ') }) : null),
+      h('button', { class: 'btn sub small', text: s.voided ? '復活' : '取消', onclick: () => {
+        if (s.voided) setVoid(s.id, false);
+        else if (confirm(`#${s.no} を取り消しますか?(在庫は元に戻り、集計から外れます)`)) setVoid(s.id, true);
+      } })))));
+}
+
+/* ---- 集計 ---- */
+function viewStats(st) {
+  const rows = productRows(st);
+  const avg = st.count ? Math.round(st.revenue / st.count) : 0;
+  const totalStock = rows.reduce((a, r) => a + (r.rem == null ? 0 : r.rem), 0);
+  return h('div', null,
+    h('div', { class: 'kpis' },
+      h('div', { class: 'kpi wide' }, h('div', { class: 'k', text: '売上合計' }), h('div', { class: 'v', text: yen(st.revenue) })),
+      h('div', { class: 'kpi' }, h('div', { class: 'k', text: '会計件数' }), h('div', { class: 'v', text: st.count + '件' })),
+      h('div', { class: 'kpi' }, h('div', { class: 'k', text: '頒布数(売上分)' }), h('div', { class: 'v', text: st.sold + '点' })),
+      h('div', { class: 'kpi' }, h('div', { class: 'k', text: '客単価' }), h('div', { class: 'v', text: yen(avg) })),
+      h('div', { class: 'kpi' }, h('div', { class: 'k', text: '献本数' }), h('div', { class: 'v', text: st.gift + '点' }))),
+    trendCard(),
+    h('div', { class: 'card' }, h('h3', { text: '商品別' }),
+      h('table', null,
+        h('thead', null, h('tr', null, ['商品', '単価', '頒布', '献本', '残', '売上'].map(t => h('th', { text: t })))),
+        h('tbody', null, rows.map(r => h('tr', null,
+          h('td', { text: r.name + (r.hidden ? '(非表示)' : '') }),
+          h('td', { text: r.unit == null ? '' : yen(r.unit) }),
+          h('td', { text: r.sold }),
+          h('td', { text: r.gift }),
+          h('td', { class: r.rem == null ? '' : r.rem <= 0 ? 'zero' : r.rem <= 3 ? 'low' : '', text: r.rem == null ? '−' : r.rem }),
+          h('td', { text: yen(r.gross) })))),
+        h('tfoot', null,
+          st.discount ? h('tr', null, h('td', { text: 'セット割引' }), h('td'), h('td'), h('td'), h('td'), h('td', { text: yen(-st.discount) })) : null,
+          h('tr', null, h('td', { text: '合計' }), h('td'), h('td', { text: st.sold }), h('td', { text: st.gift }),
+            h('td', { text: rows.some(r => r.rem != null) ? totalStock : '−' }), h('td', { text: yen(st.revenue) }))))),
+    h('div', { class: 'card' }, h('h3', { text: '書き出し' }),
+      h('div', { class: 'row wrap' },
+        h('button', { class: 'btn small', text: '集計CSV', onclick: exportSummaryCSV }),
+        h('button', { class: 'btn small', text: '明細CSV', onclick: exportDetailCSV }),
+        h('button', { class: 'btn small', text: '時間別CSV', onclick: exportTrendCSV }),
+        h('button', { class: 'btn small sub', text: 'バックアップ(JSON)', onclick: exportBackup })),
+      h('div', { class: 'note', style: 'margin-top:8px', text: 'iPhoneでは共有シートが開きます。「"ファイル"に保存」で保存できます。' })));
+}
+function productRows(st) {
+  const rows = S.products.map(p => {
+    const e = st.per[p.id];
+    return { pid: p.id, name: p.name, unit: p.price, stock: p.stock, hidden: p.hidden, sold: e.sold, gift: e.gift, gross: e.gross, rem: remainingOf(p, st) };
+  });
+  for (const [pid, e] of Object.entries(st.per)) {
+    if (!prodById(pid)) rows.push({ pid, name: e.name + '(削除済み)', unit: null, stock: null, sold: e.sold, gift: e.gift, gross: e.gross, rem: null });
+  }
+  return rows;
+}
+
+/* ---- 時間別の推移 ---- */
+// 最初の会計から最後の会計までを、時計に揃えた間隔(15分・30分…)で区切って集計する
+const trend = { metric: 'rev', step: 30, mode: 'bar', tableOpen: false };
+const TREND_STEPS = [15, 30, 60, 120, 240];
+function alignDown(ts, stepMin) { // 時計の区切り(10:00, 10:30…)に切り下げる
+  const d = new Date(ts);
+  d.setSeconds(0, 0);
+  if (stepMin < 60) d.setMinutes(Math.floor(d.getMinutes() / stepMin) * stepMin);
+  else { d.setMinutes(0); const hs = stepMin / 60; d.setHours(Math.floor(d.getHours() / hs) * hs); }
+  return d.getTime();
+}
+function trendData() {
+  const sales = S.sales.filter(s => !s.voided && !s.free); // 取消・献本は含めない(売上・頒布数と同じ基準)
+  if (!sales.length) return null;
+  let first = Infinity, last = -Infinity;
+  sales.forEach(s => { if (s.ts < first) first = s.ts; if (s.ts > last) last = s.ts; });
+  const countAt = st => Math.floor((last - alignDown(first, st)) / (st * 60000)) + 1;
+  let step = trend.step;
+  while (countAt(step) > 48 && TREND_STEPS.indexOf(step) < TREND_STEPS.length - 1) step = TREND_STEPS[TREND_STEPS.indexOf(step) + 1]; // 長い期間は自動で粗くする
+  const start = alignDown(first, step), ms = step * 60000, n = countAt(step);
+  const b = Array.from({ length: n }, (_, i) => ({ start: start + i * ms, end: start + (i + 1) * ms, count: 0, qty: 0, rev: 0 }));
+  for (const s of sales) {
+    const x = b[Math.min(n - 1, Math.floor((s.ts - start) / ms))];
+    x.count++; x.rev += s.total; x.qty += s.lines.reduce((a, l) => a + l.qty, 0);
+  }
+  let cc = 0, cq = 0, cr = 0;
+  b.forEach(x => { cc += x.count; cq += x.qty; cr += x.rev; x.cumCount = cc; x.cumQty = cq; x.cumRev = cr; });
+  return { b, step, start, ms, n, first, last };
+}
+function niceScale(max, integer) { // 目盛りをキリのいい数にする(0 / 1,000 / 2,000 …)
+  if (!(max > 0)) return integer ? { top: 4, step: 1 } : { top: 1000, step: 250 };
+  const raw = max / 4, p = Math.pow(10, Math.floor(Math.log10(raw))), f = raw / p;
+  let step = (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * p;
+  if (integer) step = Math.max(1, Math.round(step));
+  return { top: Math.ceil(max / step) * step, step };
+}
+function svgEl(tag, attrs, ...kids) {
+  const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v == null) continue;
+    if (k.startsWith('on')) el.addEventListener(k.slice(2), v); else el.setAttribute(k, v);
+  }
+  kids.flat().forEach(c => { if (c != null) el.append(c.nodeType ? c : document.createTextNode(String(c))); });
+  return el;
+}
+let trendHide = null;
+document.addEventListener('pointerdown', e => { if (trendHide && !e.target.closest('.tc-wrap')) trendHide(); }); // グラフの外をタップしたら値表示を閉じる
+
+function trendChart(d) {
+  const isRev = trend.metric === 'rev', bar = trend.mode === 'bar';
+  const val = x => isRev ? x.rev : x.qty, cum = x => isRev ? x.cumRev : x.cumQty;
+  const fmt = v => isRev ? yen(v) : v + '点';
+  const multi = new Date(d.first).toDateString() !== new Date(d.last).toDateString();
+  const tfmt = ts => { const t = new Date(ts); return (multi ? `${t.getMonth() + 1}/${t.getDate()} ` : '') + `${pad(t.getHours())}:${pad(t.getMinutes())}`; };
+  const W = 330, H = 210, L = 46, R = 12, T = 22, B = 24, pw = W - L - R, ph = H - T - B, n = d.n;
+  const sc = niceScale(bar ? Math.max(...d.b.map(val)) : cum(d.b[n - 1]), !isRev);
+  const y = v => T + ph - v / sc.top * ph;
+  const bx = i => L + pw * i / n; // 時間軸の目盛りは区切りの境界に置く
+  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img',
+    'aria-label': `${isRev ? '売上' : '頒布数'}の${bar ? '時間別' : '累計'}推移。${tfmt(d.first)}から${tfmt(d.last)}。詳しい数字は下の表でも確認できます` });
+  for (let t = 0; t <= sc.top + 1e-9; t += sc.step) {
+    svg.append(svgEl('line', { class: 'tc-grid', x1: L, x2: W - R, y1: y(t), y2: y(t) }),
+      svgEl('text', { class: 'tc-tx', x: L - 6, y: y(t) + 3.5, 'text-anchor': 'end' }, t.toLocaleString('ja-JP')));
+  }
+  const k = Math.max(1, Math.ceil((multi ? 72 : 36) / (pw / n))); // 横軸の時刻ラベルが重ならない間引き
+  for (let i = 0; i <= n; i += k) { // 右端の目盛りだけは右寄せにして、枠からはみ出さないようにする
+    const last = i === n;
+    svg.append(svgEl('text', { class: 'tc-tx', x: last ? W - 2 : bx(i), y: H - 6, 'text-anchor': last ? 'end' : 'middle' }, tfmt(d.start + i * d.ms)));
+  }
+
+  const tip = h('div', { class: 'tc-tip' });
+  const wrap = h('div', { class: 'tc-wrap' }, svg, tip);
+  let cross = null, crossDot = null;
+  const hide = () => {
+    tip.style.display = 'none';
+    svg.querySelectorAll('.hot').forEach(e => e.classList.remove('hot'));
+    if (cross) { cross.style.display = 'none'; crossDot.style.display = 'none'; }
+  };
+  trendHide = hide;
+  const showTip = (ax, head, value, sub) => {
+    tip.replaceChildren(h('div', { class: 'th', text: head }), h('div', { class: 'tv' }, h('span', { class: 'tk' }), value), h('div', { class: 'th', text: sub }));
+    tip.style.display = 'block';
+    const w = wrap.clientWidth, tw = tip.offsetWidth;
+    tip.style.left = Math.max(0, Math.min(w - tw, w * ax / W - tw / 2)) + 'px';
+  };
+  const mouseOnly = fn => e => { if (e.pointerType === 'mouse') fn(e); };
+
+  if (bar) {
+    const band = pw / n, bw = Math.min(24, Math.max(1, band - 2)); // 棒は太さ24px以内、隣との間に2pxの隙間
+    let peak = 0;
+    d.b.forEach((x, i) => { if (val(x) > val(d.b[peak])) peak = i; });
+    d.b.forEach((x, i) => {
+      const v = val(x), cx = L + band * (i + .5);
+      let el = null;
+      if (v > 0) {
+        const hh = ph * v / sc.top, x0 = cx - bw / 2, y0 = T + ph - hh, r = Math.min(4, bw / 2, hh); // 上端だけ角丸、根元は四角
+        el = svgEl('path', { class: 'tc-bar', d: `M${x0} ${y0 + hh}V${y0 + r}Q${x0} ${y0} ${x0 + r} ${y0}H${x0 + bw - r}Q${x0 + bw} ${y0} ${x0 + bw} ${y0 + r}V${y0 + hh}Z` });
+        svg.append(el);
+      }
+      const show = () => { hide(); if (el) el.classList.add('hot'); showTip(cx, `${tfmt(x.start)}〜${tfmt(x.end)}`, fmt(v), `${x.count}件・${x.qty}点`); };
+      svg.append(svgEl('rect', { x: L + band * i, y: T, width: band, height: ph + B, fill: 'transparent', tabindex: 0, // 当たり判定は棒より広く
+        'aria-label': `${tfmt(x.start)}から${tfmt(x.end)}、${fmt(v)}、${x.count}件`,
+        onpointerdown: show, onpointerenter: mouseOnly(show), onpointerleave: mouseOnly(hide), onfocus: show, onblur: hide }));
+    });
+    if (val(d.b[peak]) > 0) { // 値のラベルは最大の1本だけ
+      const lx = Math.max(L + 18, Math.min(W - R - 18, L + band * (peak + .5)));
+      svg.append(svgEl('text', { class: 'tc-val', x: lx, y: y(val(d.b[peak])) - 5, 'text-anchor': 'middle' }, fmt(val(d.b[peak]))));
+    }
+  } else {
+    const pts = [0, ...d.b.map(cum)]; // 区切り i の時点での累計
+    const path = pts.map((v, i) => `${i ? 'L' : 'M'}${bx(i)} ${y(v)}`).join('');
+    svg.append(svgEl('path', { class: 'tc-area', d: path + `L${bx(n)} ${y(0)}L${bx(0)} ${y(0)}Z` }), svgEl('path', { class: 'tc-line', d: path }));
+    const total = pts[n];
+    svg.append(svgEl('circle', { class: 'tc-dot', cx: bx(n), cy: y(total), r: 4.5 }),
+      svgEl('text', { class: 'tc-val', x: bx(n) - 8, y: y(total) - 9, 'text-anchor': 'end' }, fmt(total)));
+    cross = svgEl('line', { class: 'tc-cross', y1: T, y2: T + ph, style: 'display:none' });
+    crossDot = svgEl('circle', { class: 'tc-dot', r: 4.5, style: 'display:none' });
+    svg.append(cross, crossDot);
+    const show = e => {
+      const r = svg.getBoundingClientRect();
+      const i = Math.max(0, Math.min(n, Math.round(((e.clientX - r.left) / r.width * W - L) / pw * n))); // いちばん近い区切りに吸着
+      cross.setAttribute('x1', bx(i)); cross.setAttribute('x2', bx(i)); cross.style.display = '';
+      crossDot.setAttribute('cx', bx(i)); crossDot.setAttribute('cy', y(pts[i])); crossDot.style.display = '';
+      const c = i ? d.b[i - 1].cumCount : 0;
+      showTip(bx(i), i ? `${tfmt(d.start + i * d.ms)} まで` : `${tfmt(d.start)} 開始`, fmt(pts[i]), `累計 ${c}件`);
+    };
+    svg.append(svgEl('rect', { x: L, y: T, width: pw, height: ph + B, fill: 'transparent',
+      onpointerdown: show, onpointermove: show, onpointerleave: mouseOnly(hide) }));
+  }
+  return wrap;
+}
+
+function trendCard() {
+  const d = trendData();
+  const seg = (opts, cur, set) => h('div', { class: 'seg' }, opts.map(([v, l]) => h('button', { class: cur === v ? 'on' : '', text: l, onclick: () => { set(v); render(); } })));
+  const isRev = trend.metric === 'rev';
+  const card = h('div', { class: 'card' }, h('h3', { text: '時間別の推移' }),
+    h('div', { class: 'row wrap', style: 'margin-bottom:8px' },
+      seg([['rev', '売上'], ['qty', '頒布数']], trend.metric, v => { trend.metric = v; }),
+      seg([[15, '15分'], [30, '30分'], [60, '1時間']], trend.step, v => { trend.step = v; }),
+      seg([['bar', '時間ごと'], ['cum', '累計']], trend.mode, v => { trend.mode = v; })));
+  if (!d) { card.append(h('div', { class: 'note', text: 'まだ売上の記録がありません。会計が入ると、最初の会計から最後の会計までの推移が表示されます。' })); return card; }
+
+  const val = x => isRev ? x.rev : x.qty, cum = x => isRev ? x.cumRev : x.cumQty;
+  const fmt = v => isRev ? yen(v) : v + '点';
+  const multi = new Date(d.first).toDateString() !== new Date(d.last).toDateString();
+  const tfmt = ts => { const t = new Date(ts); return (multi ? `${t.getMonth() + 1}/${t.getDate()} ` : '') + `${pad(t.getHours())}:${pad(t.getMinutes())}`; };
+  const stepLabel = d.step >= 60 ? d.step / 60 + '時間' : d.step + '分';
+  card.append(h('div', { class: 'note', style: 'margin-bottom:2px', text: `${isRev ? '売上(円)' : '頒布数(点)'}・${stepLabel}ごと${trend.mode === 'cum' ? '・累計' : ''}` }), trendChart(d));
+
+  const mins = Math.round((d.last - d.first) / 60000);
+  let peak = d.b[0];
+  d.b.forEach(x => { if (val(x) > val(peak)) peak = x; });
+  const facts = [`最初の会計 ${tfmt(d.first)} 〜 最後の会計 ${tfmt(d.last)}(${mins >= 60 ? Math.floor(mins / 60) + '時間' : ''}${mins % 60}分)`];
+  if (val(peak) > 0) facts.push(`いちばん売れた時間帯 ${tfmt(peak.start)}〜${tfmt(peak.end)}(${fmt(val(peak))}・${peak.count}件)`);
+  if (d.step !== trend.step) facts.push(`会計の期間が長いため、${stepLabel}ごとにまとめています`);
+  card.append(h('div', { class: 'tc-facts' }, facts.map(t => h('div', { text: t }))));
+
+  card.append(h('details', { class: 'tc-table', open: trend.tableOpen, ontoggle: e => { trend.tableOpen = e.target.open; } },
+    h('summary', { text: '表で見る' }),
+    h('table', null,
+      h('thead', null, h('tr', null, ['時間帯', '件数', '頒布', '売上', '累計'].map(t => h('th', { text: t })))),
+      h('tbody', null, d.b.map(x => h('tr', null,
+        h('td', { text: `${tfmt(x.start)}〜${tfmt(x.end)}` }), h('td', { text: x.count }), h('td', { text: x.qty }),
+        h('td', { text: yen(x.rev) }), h('td', { text: isRev ? yen(x.cumRev) : x.cumQty + '点' })))))));
+  return card;
+}
+function exportTrendCSV() {
+  const d = trendData();
+  if (!d) { toast('売上の記録がありません'); return; }
+  const rows = [['開始', '終了', '会計件数', '頒布数', '売上', '累計件数', '累計頒布数', '累計売上']];
+  d.b.forEach(x => rows.push([fmtDT(x.start), fmtDT(x.end), x.count, x.qty, x.rev, x.cumCount, x.cumQty, x.cumRev]));
+  exportFile(`${safeName(S.eventName)}_時間別_${stamp()}.csv`, toCSV(rows), 'text/csv');
+}
+
+/* ---- CSV / バックアップ ---- */
+const csvCell = v => {
+  if (v == null) return '';
+  let s = String(v);
+  if (typeof v === 'string' && /^[=+\-@\t\r]/.test(s)) s = "'" + s; // 表計算の数式として解釈されないように
+  return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+};
+const toCSV = rows => '﻿' + rows.map(r => r.map(csvCell).join(',')).join('\r\n') + '\r\n';
+const safeName = s => (s || '頒布レジ').replace(/[\\/:*?"<>|\s]+/g, '_');
+
+async function exportFile(name, text, mime) {
+  const blob = new Blob([text], { type: mime });
+  const file = new File([blob], name, { type: mime });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file] }); return true; }
+    catch (e) { if (e && e.name === 'AbortError') return false; }
+  }
+  const url = URL.createObjectURL(blob);
+  const a = h('a', { href: url, download: name });
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+  return true;
+}
+function exportSummaryCSV() {
+  const st = stats();
+  const rows = [['商品名', '単価', '持ち込み数', '頒布数', '献本数', '残数', '売上(定価ベース)']];
+  productRows(st).forEach(r => rows.push([r.name, r.unit, r.stock == null ? '' : r.stock, r.sold, r.gift, r.rem == null ? '' : r.rem, r.gross]));
+  rows.push([], ['セット割引合計', '', '', '', '', '', -st.discount], ['売上合計', '', '', st.sold, st.gift, '', st.revenue], ['会計件数', st.count], ['取消件数', st.voided]);
+  exportFile(`${safeName(S.eventName)}_集計_${stamp()}.csv`, toCSV(rows), 'text/csv');
+}
+function exportDetailCSV() {
+  const st = stats();
+  const cols = productRows(st);
+  const rows = [['会計No', '日時', '区分', '取消', ...cols.map(c => c.name), 'セット割', '割引額', '合計', '預かり', 'お釣り']];
+  S.sales.forEach(s => {
+    const q = {}; s.lines.forEach(l => { q[l.pid] = (q[l.pid] || 0) + l.qty; });
+    rows.push([s.no, fmtDT(s.ts), s.free ? '献本' : '販売', s.voided ? '取消' : '', ...cols.map(c => q[c.pid] || ''),
+      (s.sets || []).map(x => `${x.name}×${x.count}`).join(' / '), s.discount || 0, s.total, s.received, s.change]);
+  });
+  exportFile(`${safeName(S.eventName)}_明細_${stamp()}.csv`, toCSV(rows), 'text/csv');
+}
+async function exportBackup() {
+  const done = await exportFile(`${safeName(S.eventName)}_backup_${stamp()}.json`, JSON.stringify(S), 'application/json');
+  if (done) { S.lastBackup = Date.now(); save(); render(); }
+}
+function importBackup(file) {
+  const r = new FileReader();
+  r.onload = () => {
+    try {
+      const o = JSON.parse(r.result);
+      if (!o || !Array.isArray(o.products) || !Array.isArray(o.sales)) throw new Error('形式が違います');
+      if (!confirm(`バックアップを読み込みます。現在のデータ(会計${S.sales.length}件)は上書きされます。よろしいですか?`)) return;
+      S = normalize(o); cartOrder = []; save(); render(); toast('バックアップを読み込みました');
+    } catch (e) { alert('読み込めませんでした: ' + e.message); }
+  };
+  r.readAsText(file);
+}
+
+/* ---- 設定 ---- */
+function viewSettings(st) {
+  const standalone = navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
+  const moveProd = (i, d) => {
+    const j = i + d;
+    if (j < 0 || j >= S.products.length) return;
+    [S.products[i], S.products[j]] = [S.products[j], S.products[i]];
+    save(); render();
+  };
+  const fileIn = h('input', { type: 'file', accept: 'application/json,.json', style: 'display:none', onchange: e => { if (e.target.files[0]) importBackup(e.target.files[0]); e.target.value = ''; } });
+  return h('div', null,
+    h('div', { class: 'card' },
+      h('div', { class: 'field', style: 'margin:0' }, h('label', { text: 'イベント名(CSVのファイル名にも使います)' }),
+        h('input', { type: 'text', value: S.eventName, placeholder: '例: 秋の例大祭', onchange: e => { S.eventName = e.target.value.trim(); save(); render(); } }))),
+    h('div', { class: 'card' }, h('h3', { text: '商品' }),
+      S.products.length ? S.products.map((p, i) => {
+        const rem = remainingOf(p, st);
+        return h('div', { class: 'item' + (p.hidden ? ' void' : '') },
+          h('div', { class: 'main' },
+            h('div', { class: 't', text: p.name }),
+            h('div', { class: 'd', text: `${yen(p.price)} ・ ` + (p.stock == null ? '在庫管理なし' : `持ち込み ${p.stock} / 残 ${rem}`) + (p.hidden ? ' ・ 非表示' : '') })),
+          h('button', { class: 'btn sub small', text: '↑', disabled: i === 0, onclick: () => moveProd(i, -1) }),
+          h('button', { class: 'btn sub small', text: '↓', disabled: i === S.products.length - 1, onclick: () => moveProd(i, 1) }),
+          h('button', { class: 'btn small', text: '編集', onclick: () => openProductSheet(p) }));
+      }) : h('div', { class: 'note', text: 'まだ商品がありません。' }),
+      h('button', { class: 'btn block', style: 'margin-top:10px', text: '+ 商品を追加', onclick: () => openProductSheet(null) })),
+    h('div', { class: 'card' }, h('h3', { text: 'セット割' }),
+      S.sets.length ? S.sets.map(s => h('div', { class: 'item' },
+        h('div', { class: 'main' },
+          h('div', { class: 't', text: s.name }),
+          h('div', { class: 'd', text: s.items.map(i => `${prodById(i.pid)?.name || '?'}×${i.qty}`).join(' + ') + ` → ${yen(s.price)}` })),
+        h('button', { class: 'btn small', text: '編集', onclick: () => openSetSheet(s) })))
+        : h('div', { class: 'note', text: 'カートの中身がセットの条件を満たすと、自動で割引されます。「新刊+既刊で○○円」「同じ本を3冊で○○円」など。' }),
+      h('button', { class: 'btn block', style: 'margin-top:10px', text: '+ セット割を追加', disabled: S.products.length < 1, onclick: () => openSetSheet(null) })),
+    h('div', { class: 'card' }, h('h3', { text: 'QRコード' }),
+      h('div', { class: 'note', text: '商品ごとのQRを印刷してテーブルに置き、会計のたびにカメラで読み取ると、入力ミスなくカートに入ります。商品を登録し終えてから印刷してください。' }),
+      h('button', { class: 'btn block', style: 'margin-top:10px', text: 'QRシートを表示・印刷', disabled: !S.products.some(p => !p.hidden), onclick: openQrSheet })),
+    h('div', { class: 'card' }, h('h3', { text: '画面・音' }),
+      h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: S.beep, onchange: e => { S.beep = e.target.checked; save(); } }), 'QR読み取りの確認音を鳴らす'),
+      h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: S.wake, onchange: e => { S.wake = e.target.checked; save(); applyWake(); } }), '画面を消さない(レジ中にスリープさせない)')),
+    h('div', { class: 'card' }, h('h3', { text: 'データ' }),
+      h('div', { class: 'note', text: S.lastBackup ? `最終バックアップ: ${fmtDT(S.lastBackup)}` : 'まだバックアップを書き出していません。' }),
+      !standalone ? h('div', { class: 'note warn', style: 'margin-top:6px', text: 'ホーム画面に追加せずSafariのタブで使うと、一定期間でデータが消えることがあります。共有メニューから「ホーム画面に追加」して使ってください。' }) : null,
+      persisted === false ? h('div', { class: 'note warn', style: 'margin-top:6px', text: 'この端末では保存領域の保護(persist)が許可されていません。こまめにバックアップを書き出してください。' }) : null,
+      h('div', { class: 'row wrap', style: 'margin-top:10px' },
+        h('button', { class: 'btn small', text: 'バックアップ書き出し', onclick: exportBackup }),
+        h('button', { class: 'btn small sub', text: '読み込み', onclick: () => fileIn.click() }), fileIn),
+      h('hr', { style: 'border:0;border-top:1px solid var(--line);margin:14px 0' }),
+      h('div', { class: 'note', text: '新しいイベントを始めるときは、先にCSVとバックアップを書き出してから会計データをリセットします(商品・セット設定は残ります)。' }),
+      h('button', { class: 'btn danger small', style: 'margin-top:8px', text: '会計データをリセット', onclick: resetSales })));
+}
+function resetSales() {
+  if (!S.sales.length && !Object.keys(S.cart).length) { toast('リセットするデータがありません'); return; }
+  if (!confirm(`会計${S.sales.length}件をすべて削除します。CSV・バックアップは書き出しましたか?`)) return;
+  if (!confirm('本当にリセットしますか?(元に戻せません)')) return;
+  S.sales = []; S.cart = {}; cartOrder = [];
+  save(); render(); toast('会計データをリセットしました。持ち込み数を見直してください');
+}
+
+/* ---- 商品の追加・編集 ---- */
+function openProductSheet(p) {
+  const st = stats();
+  const used = p ? (st.per[p.id].sold + st.per[p.id].gift) : 0;
+  const name = h('input', { type: 'text', value: p ? p.name : '', placeholder: '例: 新刊「○○○」' });
+  const price = h('input', { type: 'number', inputMode: 'numeric', value: p ? p.price : '', placeholder: '円' });
+  const stock = h('input', { type: 'number', inputMode: 'numeric', value: p && p.stock != null ? p.stock : '', placeholder: '空欄 = 在庫管理しない' });
+  const rem = h('input', { type: 'number', inputMode: 'numeric', value: p && p.stock != null ? p.stock - used : '', placeholder: '' });
+  stock.addEventListener('input', () => { const v = num(stock.value); rem.value = v == null ? '' : v - used; });
+  rem.addEventListener('input', () => { const v = num(rem.value); stock.value = v == null ? '' : v + used; });
+  const visible = h('input', { type: 'checkbox', checked: p ? !p.hidden : true });
+  const close = openSheet(p ? '商品を編集' : '商品を追加',
+    h('div', { class: 'field' }, h('label', { text: '商品名' }), name),
+    h('div', { class: 'field' }, h('label', { text: '価格(円)' }), price),
+    h('div', { class: 'field' }, h('label', { text: '持ち込み数' }), stock,
+      h('div', { class: 'hint', text: '会場に持ってきた総数です。残数は「持ち込み数 − 頒布数 − 献本数」で自動計算されます。' })),
+    p ? h('div', { class: 'field' }, h('label', { text: '現在の残数(実数を数えたら、ここを直すと持ち込み数が補正されます)' }), rem) : null,
+    p ? h('label', { class: 'check' }, visible, 'レジに表示する') : null,
+    p ? h('div', { class: 'hint note', text: `QRコード: ${p.code}(名前や価格を変えても同じQRのまま使えます)` }) : null,
+    h('div', { class: 'actions' },
+      p ? h('button', { class: 'btn danger', text: '削除', onclick: () => deleteProduct(p, close) }) : null,
+      h('button', { class: 'btn sub', text: '閉じる', onclick: () => close() }),
+      h('button', { class: 'btn', text: '保存', onclick: () => {
+        const n = name.value.trim(), pr = num(price.value);
+        if (!n) { alert('商品名を入力してください'); return; }
+        if (pr == null || pr < 0) { alert('価格を入力してください'); return; }
+        let sk = stock.value === '' ? null : num(stock.value);
+        if (sk != null && sk < 0) sk = 0;
+        if (p) { p.name = n; p.price = pr; p.stock = sk; p.hidden = !visible.checked; }
+        else S.products.push({ id: uid(), code: nextCode(S), name: n, price: pr, stock: sk, hidden: false });
+        save(); close(); render();
+      } })));
+  setTimeout(() => { if (!p) name.focus(); }, 50);
+}
+function deleteProduct(p, close) {
+  const used = S.sales.some(s => s.lines.some(l => l.pid === p.id));
+  const msg = used ? `「${p.name}」には会計の記録があるため、削除せずレジから非表示にします。よろしいですか?`
+                   : `「${p.name}」を削除します。よろしいですか?`;
+  if (!confirm(msg)) return;
+  if (used) p.hidden = true;
+  else {
+    S.products = S.products.filter(x => x.id !== p.id);
+    delete S.cart[p.id];
+    S.sets.forEach(s => { s.items = s.items.filter(i => i.pid !== p.id); });
+    S.sets = S.sets.filter(s => s.items.length);
+  }
+  save(); close(); render();
+}
+
+/* ---- セット割の追加・編集 ---- */
+function openSetSheet(s) {
+  const qty = {};
+  S.products.forEach(p => { qty[p.id] = 0; });
+  if (s) s.items.forEach(i => { if (i.pid in qty) qty[i.pid] = i.qty; });
+  const name = h('input', { type: 'text', value: s ? s.name : '', placeholder: '例: 新刊+既刊セット' });
+  const price = h('input', { type: 'number', inputMode: 'numeric', value: s ? s.price : '', placeholder: 'セット価格(円)' });
+  const info = h('div', { class: 'note', style: 'margin-top:6px' });
+  const list = h('div');
+  function listSum() { return S.products.reduce((a, p) => a + p.price * qty[p.id], 0); }
+  function draw() {
+    list.replaceChildren(...S.products.map(p => h('div', { class: 'item' },
+      h('div', { class: 'main' }, h('div', { class: 't', text: p.name }), h('div', { class: 'd', text: yen(p.price) })),
+      h('span', { class: 'step' },
+        h('button', { text: '−', onclick: () => { if (qty[p.id] > 0) { qty[p.id]--; draw(); } } }),
+        h('span', { text: qty[p.id] }),
+        h('button', { text: '+', onclick: () => { qty[p.id]++; draw(); } })))));
+    const ls = listSum(), pr = num(price.value);
+    info.textContent = ls ? `定価合計 ${yen(ls)}` + (pr != null ? ` → セット価格 ${yen(pr)}(${pr < ls ? yen(ls - pr) + ' お得' : '割引にならないため適用されません'})` : '') : '含める商品の数を選んでください';
+  }
+  price.addEventListener('input', draw);
+  const close = openSheet(s ? 'セット割を編集' : 'セット割を追加',
+    h('div', { class: 'field' }, h('label', { text: 'セット名' }), name),
+    h('div', { class: 'field' }, h('label', { text: '含める商品と数' }), list),
+    h('div', { class: 'field' }, h('label', { text: 'セット価格(円)' }), price, info),
+    h('div', { class: 'actions' },
+      s ? h('button', { class: 'btn danger', text: '削除', onclick: () => {
+        if (!confirm(`セット割「${s.name}」を削除しますか?`)) return;
+        S.sets = S.sets.filter(x => x.id !== s.id); save(); close(); render();
+      } }) : null,
+      h('button', { class: 'btn sub', text: '閉じる', onclick: () => close() }),
+      h('button', { class: 'btn', text: '保存', onclick: () => {
+        const items = S.products.filter(p => qty[p.id] > 0).map(p => ({ pid: p.id, qty: qty[p.id] }));
+        const pr = num(price.value);
+        const total = items.reduce((a, i) => a + i.qty, 0);
+        if (total < 2) { alert('セットには合計2点以上の商品を含めてください'); return; }
+        if (pr == null || pr < 0) { alert('セット価格を入力してください'); return; }
+        const n = name.value.trim() || items.map(i => prodById(i.pid).name).join('+');
+        if (s) { s.name = n; s.items = items; s.price = pr; }
+        else S.sets.push({ id: uid(), name: n, items, price: pr });
+        save(); close(); render();
+      } })));
+  draw();
+}
+
+/* ---- 画面を消さない ---- */
+let wakeLock = null;
+async function applyWake() {
+  try {
+    if (S.wake && 'wakeLock' in navigator) { if (!wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); } }
+    else if (wakeLock) { await wakeLock.release(); wakeLock = null; }
+  } catch (e) { /* 非対応・拒否は無視 */ }
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && S.wake) applyWake(); });
+
+/* ============ QRスキャン ============ */
+// QRの中身は商品だけ: HANPU1:P:<商品コード>。会計・取消などの操作は画面のボタンで行う(読み間違いで会計が走らないように)
+const QR_PREFIX = 'HANPU1:';
+const qrOfProduct = p => QR_PREFIX + 'P:' + p.code;
+const REARM_MS = 900; // 同じQRを再カウントするには、いったん映らなくなってからこの時間が必要
+
+const scan = { on: false, stream: null, raf: 0, lastTick: 0, lastCode: null, lastSeen: 0, audio: null, msgTimer: 0, canvas: document.createElement('canvas') };
+// カメラの取得口(テストで差し替えられるように切り出してある)
+let getCameraStream = () => navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+
+const loadedScripts = {};
+function loadScript(src) { // 使う画面を開いたときに初めて読み込む(同一オリジンに同梱したライブラリ。外部通信なし)
+  if (!loadedScripts[src]) loadedScripts[src] = new Promise((res, rej) => {
+    document.head.append(h('script', { src, onload: () => res(), onerror: () => { delete loadedScripts[src]; rej(new Error('読み込み失敗: ' + src)); } }));
+  });
+  return loadedScripts[src];
+}
+
+async function startScan() {
+  if (scan.on) return;
+  try {
+    await loadScript('lib/jsQR.js');
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (AC) { scan.audio = scan.audio || new AC(); if (scan.audio.resume) scan.audio.resume(); } // タップ操作の中で音を有効化
+    scan.stream = await getCameraStream();
+  } catch (e) {
+    const denied = e && (e.name === 'NotAllowedError' || e.name === 'SecurityError');
+    toast(denied ? 'カメラが許可されていません。端末の設定でこのアプリのカメラを許可してください' : 'カメラを開始できませんでした(' + (e && e.message || e) + ')');
+    return;
+  }
+  const v = $('#scanVideo');
+  v.srcObject = scan.stream;
+  try { await v.play(); } catch (e) { /* 自動再生がブロックされても次のフレームで再試行される */ }
+  scan.on = true;
+  scan.lastCode = null;
+  $('#scanner').hidden = false;
+  updateScanSoundBtn();
+  render();
+  scanLoop();
+}
+function stopScan() {
+  scan.on = false;
+  cancelAnimationFrame(scan.raf);
+  if (scan.stream) { scan.stream.getTracks().forEach(t => t.stop()); scan.stream = null; }
+  const v = $('#scanVideo');
+  v.srcObject = null;
+  $('#scanner').hidden = true;
+  if (tab === 'register') render();
+}
+function updateScanSoundBtn() { $('#scanSound').textContent = S.beep ? '音 ON' : '音 OFF'; }
+$('#scanClose').addEventListener('click', stopScan);
+$('#scanSound').addEventListener('click', () => { S.beep = !S.beep; save(); updateScanSoundBtn(); });
+
+function scanLoop() {
+  if (!scan.on) return;
+  scan.raf = requestAnimationFrame(scanLoop);
+  const now = performance.now();
+  if (now - scan.lastTick < 80) return; // 約12fps
+  scan.lastTick = now;
+  const v = $('#scanVideo');
+  if (v.readyState < 2 || !v.videoWidth) return;
+  if (document.hidden) return;
+  const muted = $('#sheetRoot').childElementCount > 0; // 会計画面などを開いている間は、映っているQRを「見た」ことにするだけで数えない
+  const sc = Math.min(1, 800 / v.videoWidth);
+  const w = Math.round(v.videoWidth * sc), hh = Math.round(v.videoHeight * sc);
+  const c = scan.canvas;
+  if (c.width !== w || c.height !== hh) { c.width = w; c.height = hh; }
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(v, 0, 0, w, hh);
+  const img = ctx.getImageData(0, 0, w, hh);
+  const r = jsQR(img.data, w, hh, { inversionAttempts: 'dontInvert' });
+  onFrame(r ? r.data : null, now, muted);
+}
+// 同じQRが映り続けている間は1回だけ数える。いったん映らなくなる(または別のQRに移る)と再び受け付ける。
+// muted のとき(会計画面の表示中)は、映っているQRを既読にするだけ。閉じた瞬間に二重で数えるのを防ぐ
+function onFrame(data, now, muted) {
+  if (data) {
+    scan.lastSeen = now;
+    if (data !== scan.lastCode) { scan.lastCode = data; if (!muted) onScanned(data); }
+  } else if (scan.lastCode && now - scan.lastSeen > REARM_MS) {
+    scan.lastCode = null;
+  }
+}
+
+function flash(msg, kind) {
+  const el = $('#scanMsg');
+  el.textContent = msg;
+  el.className = 'scan-msg show ' + kind;
+  clearTimeout(scan.msgTimer);
+  scan.msgTimer = setTimeout(() => { el.className = 'scan-msg'; }, 1800);
+  beep(kind);
+  if (navigator.vibrate) navigator.vibrate(kind === 'ok' ? 40 : [60, 40, 60]);
+}
+function beep(kind) {
+  if (!S.beep || !scan.audio) return;
+  try {
+    const t0 = scan.audio.currentTime;
+    const tone = (f, at, dur) => {
+      const o = scan.audio.createOscillator(), g = scan.audio.createGain();
+      o.frequency.value = f; g.gain.value = 0.15;
+      o.connect(g); g.connect(scan.audio.destination);
+      o.start(t0 + at); o.stop(t0 + at + dur);
+    };
+    if (kind === 'ok') tone(1200, 0, 0.08);
+    else if (kind === 'warn') { tone(800, 0, 0.1); tone(800, 0.15, 0.1); }
+    else { tone(250, 0, 0.25); }
+  } catch (e) { /* 音が出なくても会計には影響しない */ }
+}
+
+function onScanned(data) {
+  if (!data.startsWith(QR_PREFIX)) { flash('このアプリのQRではありません', 'bad'); return; }
+  const [kind, val] = data.slice(QR_PREFIX.length).split(':');
+  if (kind !== 'P') { flash('商品のQRではありません(会計などは画面のボタンで)', 'bad'); return; }
+  const p = S.products.find(x => x.code === val);
+  if (!p) { flash(`未登録のQRです(${val})`, 'bad'); return; }
+  if (p.hidden) { flash(`「${p.name}」はレジから非表示です`, 'bad'); return; }
+  const rem = remainingOf(p, stats());
+  const inCart = S.cart[p.id] || 0;
+  addToCart(p.id, true);
+  const soldOut = rem != null && rem - inCart <= 0;
+  flash(`${p.name}  +1(計${S.cart[p.id]})` + (soldOut ? '\n在庫がありません' : ''), soldOut ? 'warn' : 'ok');
+}
+// iOSはホーム画面アプリがバックグラウンドに回るとカメラが止まるので、戻ってきたら起動し直す
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible' || !scan.on) return;
+  const live = scan.stream && scan.stream.getTracks().some(t => t.readyState === 'live');
+  if (!live) { stopScan(); startScan(); }
+});
+
+/* ---- QRシート(印刷用) ---- */
+function qrSvg(text) {
+  const q = qrcode(0, 'M'); // 型番は自動。短い文字列なので小さく粗いQR=遠くからでも読みやすい
+  q.addData(text);
+  q.make();
+  const n = q.getModuleCount(), m = 4; // 周囲の余白(クワイエットゾーン)4モジュール
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${n + 2 * m} ${n + 2 * m}`);
+  svg.setAttribute('shape-rendering', 'crispEdges');
+  const bg = document.createElementNS(ns, 'rect');
+  bg.setAttribute('width', n + 2 * m); bg.setAttribute('height', n + 2 * m); bg.setAttribute('fill', '#fff');
+  let d = '';
+  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (q.isDark(r, c)) d += `M${c + m} ${r + m}h1v1h-1z`;
+  const path = document.createElementNS(ns, 'path');
+  path.setAttribute('d', d); path.setAttribute('fill', '#000');
+  svg.append(bg, path);
+  return svg;
+}
+async function openQrSheet() {
+  try { await loadScript('lib/qrcode.js'); }
+  catch (e) { toast('QRの生成部品を読み込めませんでした'); return; }
+  const close = () => sheet.remove();
+  const card = (text, name, sub, code) => h('div', { class: 'qr-card' },
+    qrSvg(text), h('div', { class: 'qn', text: name }), sub ? h('div', { class: 'qp', text: sub }) : null, h('div', { class: 'qc', text: code }));
+  const prods = S.products.filter(p => !p.hidden);
+  const sheet = h('div', { id: 'qrSheet' },
+    h('div', { class: 'qr-top noprint' },
+      h('button', { class: 'btn small sub', text: '閉じる', onclick: close }),
+      h('button', { class: 'btn small', text: '印刷', onclick: () => window.print() })),
+    h('div', { class: 'qr-note noprint', text: '印刷してテーブルに置き、会計のたびに読み取ります。商品の下の英数字(P01など)が各QRの中身です。商品を追加したあとは、この画面を開き直してください。名前や価格を変えても、QRはそのまま使えます。' }),
+    h('div', { class: 'qr-title', text: '商品' }),
+    h('div', { class: 'qr-grid' }, prods.map(p => card(qrOfProduct(p), p.name, yen(p.price), p.code))));
+  document.body.append(sheet);
+}
+
+/* ============ 起動 ============ */
+render();
+applyWake();
+if (recovered) toast('保存データが読めなかったため、ひとつ前の状態から復元しました');
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+</script>
+</body>
+</html>
