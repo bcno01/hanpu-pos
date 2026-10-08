@@ -309,7 +309,7 @@ const KEY = 'hanpu-pos-v1';
 const PREV = KEY + '-prev'; // 直前の保存内容(本体が壊れたときの保険)
 
 function defaultState() {
-  return { v: 1, eventName: '', products: [], sets: [], sales: [], cart: {}, lastBackup: null, wake: false, beep: true, codeSeq: 0 };
+  return { v: 1, eventName: '', products: [], sets: [], sales: [], cart: {}, lastBackup: null, wake: false, beep: true, codeSeq: 0, currency: 'JPY', rates: {} };
 }
 // QR用の商品コード(P01, P02, ...)。連番は増える一方で、削除した商品のコードは再利用しない
 // (印刷済みの古いQRが別の商品として読まれる事故を防ぐ)
@@ -331,6 +331,7 @@ function normalize(o) {
     sets: Array.isArray(o.sets) ? o.sets : [],
     sales: Array.isArray(o.sales) ? o.sales : [],
     cart: o.cart && typeof o.cart === 'object' ? o.cart : {},
+    rates: o.rates && typeof o.rates === 'object' ? o.rates : {},
   });
   ensureCodes(st);
   return st;
@@ -383,6 +384,30 @@ function h(tag, attrs, ...kids) {
 }
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 const yen = n => (n < 0 ? '−¥' : '¥') + Math.abs(Number(n)).toLocaleString('ja-JP');
+
+/* ============ 通貨 ============ */
+// 商品価格・会計・売上は、内部では常に「円」で持つ。表示と支払いだけを、設定で選んだ通貨に換算する。
+// rate = 外貨1単位あたりの円(手入力。例 USD は 150 = 1ドル150円)。画面では per 単位あたり(KRWは100ウォン)で入力させる。
+const CUR = {
+  JPY: { name: '円', sym: '¥', dec: 0, step: 1, per: 1, notes: [500, 1000, 5000, 10000] },
+  USD: { name: '米ドル', sym: '$', dec: 2, step: 0.01, per: 1, notes: [1, 5, 10, 20, 50, 100] },
+  KRW: { name: 'ウォン', sym: '₩', dec: 0, step: 100, per: 100, notes: [1000, 5000, 10000, 50000] },
+  EUR: { name: 'ユーロ', sym: '€', dec: 2, step: 0.01, per: 1, notes: [5, 10, 20, 50, 100] },
+  CNY: { name: '人民元', sym: 'CN¥', dec: 1, step: 0.1, per: 1, notes: [1, 5, 10, 20, 50, 100] },
+  TWD: { name: '台湾ドル', sym: 'NT$', dec: 0, step: 1, per: 1, notes: [100, 500, 1000] },
+};
+const rateOf = code => code === 'JPY' ? 1 : (S.rates && S.rates[code] > 0 ? S.rates[code] : 0);
+// 選択中の通貨。レートが未設定なら円に戻す(換算できないので)
+const curCode = () => (CUR[S.currency] && rateOf(S.currency) > 0) ? S.currency : 'JPY';
+const roundCur = (n, code) => { const c = CUR[code]; return Number((Math.round(n / c.step + 1e-9) * c.step).toFixed(c.dec)); }; // 支払える最小単位に丸める
+const fmtCur = (n, code) => {
+  const c = CUR[code];
+  const s = Math.abs(n).toLocaleString('ja-JP', { minimumFractionDigits: c.dec, maximumFractionDigits: c.dec });
+  return (n < 0 ? '−' : '') + c.sym + s;
+};
+const toCur = (y, code) => y / rateOf(code);                 // 円 → 外貨(丸める前)
+const money = y => { const code = curCode(); return code === 'JPY' ? yen(y) : fmtCur(roundCur(toCur(y, code), code), code); }; // 円の金額を、選択中の通貨で表示
+const both = y => curCode() === 'JPY' ? yen(y) : `${yen(y)} / ${money(y)}`; // マスター(円)の価格に、換算後を添える
 const num = v => { const n = parseInt(String(v).replace(/[^\d-]/g, ''), 10); return isNaN(n) ? null : n; };
 const pad = n => String(n).padStart(2, '0');
 const fmtTime = ts => { const d = new Date(ts); return pad(d.getHours()) + ':' + pad(d.getMinutes()); };
@@ -441,6 +466,7 @@ function stats() {
   const ensure = (pid, name) => per[pid] || (per[pid] = { name, sold: 0, gift: 0, gross: 0 });
   S.products.forEach(p => ensure(p.id, p.name));
   let revenue = 0, count = 0, discount = 0, sold = 0, gift = 0, giftCount = 0, voided = 0;
+  const cash = {}; // 通貨ごとに実際に受け取った現金(お釣りを引いた額)
   for (const s of S.sales) {
     if (s.voided) { voided++; continue; }
     for (const l of s.lines) {
@@ -449,9 +475,13 @@ function stats() {
       else { e.sold += l.qty; e.gross += l.qty * l.unit; sold += l.qty; }
     }
     if (s.free) giftCount++;
-    else { revenue += s.total; discount += s.discount; count++; }
+    else {
+      revenue += s.total; discount += s.discount; count++;
+      const k = s.fx ? s.fx.cur : 'JPY', e = cash[k] || (cash[k] = { n: 0, amt: 0 });
+      e.n++; e.amt += s.fx ? s.fx.due : s.total;
+    }
   }
-  return { per, revenue, count, discount, sold, gift, giftCount, voided };
+  return { per, revenue, count, discount, sold, gift, giftCount, voided, cash };
 }
 function remainingOf(p, st) {
   if (p.stock == null) return null;
@@ -505,7 +535,7 @@ const TABS = [['register', 'レジ'], ['history', '履歴'], ['stats', '集計']
 function render() {
   const st = stats();
   $('#hEvent').textContent = S.eventName || '頒布レジ';
-  $('#hSum').replaceChildren('売上 ', h('b', { text: yen(st.revenue) }), ` / ${st.count}件`);
+  $('#hSum').replaceChildren('売上 ', h('b', { text: money(st.revenue) }), ` / ${st.count}件`);
   $('#tabs').replaceChildren(...TABS.map(([k, label]) =>
     h('button', { class: tab === k ? 'on' : '', text: label, onclick: () => { if (tab !== k) { tab = k; hideToast(); if (k !== 'register') stopScan(); render(); $('#view').scrollTop = 0; } } })));
   const view = $('#view');
@@ -528,7 +558,7 @@ function viewRegister(st) {
     const left = rem == null ? null : rem - q;
     return h('button', { class: 'prod' + (q ? ' in' : '') + (left != null && left <= 0 ? ' out' : ''), onclick: () => addToCart(p.id) },
       h('span', { class: 'pn', text: p.name }),
-      h('span', { class: 'pp', text: yen(p.price) }),
+      h('span', { class: 'pp', text: money(p.price) }),
       left == null ? null : h('span', { class: 'pr' + (left <= 0 ? ' zero' : left <= 3 ? ' low' : ''), text: left === 0 ? '完売' : '残 ' + left }),
       q ? h('span', { class: 'badge', text: q }) : null);
   })));
@@ -547,14 +577,14 @@ function renderCart() {
           h('button', { text: '−', onclick: () => decCart(l.pid) }),
           h('span', { text: l.qty }),
           h('button', { text: '+', onclick: () => addToCart(l.pid) })),
-        h('span', { class: 'amt', text: yen(l.unit * l.qty) }))),
+        h('span', { class: 'amt', text: money(l.unit * l.qty) }))),
       c.sets.map(s => h('div', { class: 'cl disc' },
         h('span', { class: 'nm', text: `セット割「${s.name}」${s.count > 1 ? '×' + s.count : ''}` }),
-        h('span', { class: 'amt', text: yen(-s.each * s.count) })))),
+        h('span', { class: 'amt', text: money(-s.each * s.count) })))),
     h('div', { class: 'cart-foot' },
       h('button', { class: 'btn sub small', text: 'クリア', onclick: () => { if (confirm('カートを空にしますか?')) clearCart(); } }),
       h('button', { class: 'btn sub small', text: '1つ戻す', disabled: !cartOrder.length, onclick: undoLast }),
-      h('div', { class: 'total' }, yen(c.total), c.discount ? h('small', { text: `(割引 ${yen(c.discount)})` }) : null),
+      h('div', { class: 'total' }, money(c.total), c.discount ? h('small', { text: `(割引 ${money(c.discount)})` }) : null),
       h('button', { class: 'btn pay', text: '会計', onclick: openCheckout })));
 }
 
@@ -562,48 +592,58 @@ function renderCart() {
 function openCheckout() {
   const c = calc(S.cart);
   if (!c.lines.length) return;
+  const code = curCode(), cur = CUR[code], fx = code !== 'JPY'; // 開いた時点の通貨で会計する(途中で変えても金額がぶれないように)
+  const rate = rateOf(code);
+  const dueOf = y => fx ? roundCur(toCur(y, code), code) : y; // 支払う金額(選択通貨)
+  const cm = n => fx ? fmtCur(n, code) : yen(n);               // 選択通貨での表示
   let free = false, received = null; // received が null = ちょうど
   const payEl = h('div', { class: 'big' });
   const subEl = h('div', { class: 'sub-note' });
   const chgEl = h('div', { class: 'chg' });
-  const input = h('input', { type: 'number', inputMode: 'numeric', placeholder: '預かり金額(空欄 = ちょうど)',
-    oninput: () => { received = input.value === '' ? null : num(input.value); update(); } });
+  const input = h('input', { type: 'number', inputMode: fx && cur.dec ? 'decimal' : 'numeric', step: 'any', placeholder: '預かり金額(空欄 = ちょうど)',
+    oninput: () => { const v = parseFloat(input.value); received = input.value === '' || isNaN(v) ? null : v; update(); } });
   const payGroup = h('div', { class: 'field' },
-    h('label', { text: '預かり' }), input,
+    h('label', { text: `預かり(${cur.name})` }), input,
     h('div', { class: 'row wrap', style: 'margin-top:8px' },
       h('button', { class: 'chip', text: 'ちょうど', onclick: () => setRec(null) }),
-      [500, 1000, 5000, 10000].map(v => h('button', { class: 'chip', text: yen(v), onclick: () => setRec(v) }))));
+      cur.notes.map(v => h('button', { class: 'chip', text: fx ? cur.sym + v.toLocaleString('ja-JP') : yen(v), onclick: () => setRec(v) }))));
   const ok = h('button', { class: 'btn', text: '確定', onclick: confirmSale });
   function setRec(v) { received = v; input.value = v == null ? '' : v; update(); }
-  function pay() { return free ? 0 : c.total; }
+  function due() { return free ? 0 : dueOf(c.total); }
+  function recOf() { return received == null ? due() : roundCur(received, code); }
   function update() {
-    const p = pay();
-    payEl.textContent = yen(p);
-    subEl.textContent = free ? '献本(売上に含めず、在庫だけ減らします)' : c.discount ? `小計 ${yen(c.subtotal)} − セット割 ${yen(c.discount)}` : '';
+    const p = due();
+    payEl.textContent = cm(p);
+    subEl.textContent = free ? '献本(売上に含めず、在庫だけ減らします)'
+      : [c.discount ? `小計 ${money(c.subtotal)} − セット割 ${money(c.discount)}` : '', fx ? `${yen(c.total)} を換算(${cur.per}${cur.sym} = ${+(rate * cur.per).toFixed(4)}円)` : ''].filter(Boolean).join('\n');
+    subEl.style.whiteSpace = 'pre-line';
     payGroup.style.display = free || p === 0 ? 'none' : '';
-    const rec = received == null ? p : received;
+    const rec = recOf();
     const good = rec >= p;
     chgEl.className = 'chg' + (good ? '' : ' bad');
-    chgEl.textContent = free || p === 0 ? '' : good ? `お釣り ${yen(rec - p)}` : `不足 ${yen(p - rec)}`;
+    chgEl.textContent = free || p === 0 ? '' : good ? `お釣り ${cm(roundCur(rec - p, code))}` : `不足 ${cm(roundCur(p - rec, code))}`;
     ok.disabled = !good;
   }
   function confirmSale() {
-    const p = pay();
-    const rec = received == null ? p : received;
+    const p = due();
+    const rec = recOf();
     if (rec < p) return;
     const no = S.sales.reduce((m, s) => Math.max(m, s.no || 0), 0) + 1;
     const sale = {
       id: uid(), no, ts: Date.now(),
       lines: c.lines.map(l => ({ pid: l.pid, name: l.name, qty: l.qty, unit: l.unit })),
       sets: free ? [] : c.sets,
-      subtotal: c.subtotal, discount: free ? 0 : c.discount, total: p,
-      received: free ? 0 : rec, change: free ? 0 : rec - p, free, voided: false,
+      subtotal: c.subtotal, discount: free ? 0 : c.discount,
+      total: free ? 0 : c.total, // 売上は常に円で記録する
+      // 円で受け取ったときは従来どおり。外貨のときは円側を「ちょうど受け取った」扱いにして、外貨の実額は fx に残す
+      received: free ? 0 : fx ? c.total : rec, change: free ? 0 : fx ? 0 : rec - p, free, voided: false,
     };
+    if (fx && !free) sale.fx = { cur: code, rate, due: p, received: rec, change: roundCur(rec - p, code) };
     S.sales.push(sale);
     S.cart = {};
     cartOrder = [];
     save(); close(); render();
-    toast(`#${no} を記録しました(${free ? '献本' : yen(p)})`, '取り消す', () => setVoid(sale.id, true));
+    toast(`#${no} を記録しました(${free ? '献本' : cm(p)})`, '取り消す', () => setVoid(sale.id, true));
   }
   const close = openSheet('会計',
     payEl, subEl, chgEl,
@@ -630,12 +670,14 @@ function viewHistory(st) {
     h('div', { class: 'note', style: 'margin:0 4px 8px', text: `全${S.sales.length}件(取消 ${st.voided}件)` }),
     h('div', { class: 'card' }, list.map(s => h('div', { class: 'item' + (s.voided ? ' void' : '') },
       h('div', { class: 'main' },
-        h('div', { class: 't' }, `#${s.no}  ${fmtTime(s.ts)}  `, h('b', { text: s.free ? '献本' : yen(s.total) }),
+        h('div', { class: 't' }, `#${s.no}  ${fmtTime(s.ts)}  `, h('b', { text: s.free ? '献本' : s.fx ? fmtCur(s.fx.due, s.fx.cur) : yen(s.total) }), // 履歴は、実際に受け取った通貨で表示する
           s.free ? h('span', { class: 'tag gray', text: '無料' }) : null,
           s.voided ? h('span', { class: 'tag gray', text: '取消済' }) : null),
         h('div', { class: 'd', text: saleSummary(s) }),
-        (s.sets && s.sets.length) || (!s.free && s.change > 0) ? h('div', { class: 'd', text:
-          [...(s.sets || []).map(x => `セット割「${x.name}」×${x.count}`), !s.free && s.change > 0 ? `預かり ${yen(s.received)} / お釣り ${yen(s.change)}` : ''].filter(Boolean).join(' ・ ') }) : null),
+        (s.sets && s.sets.length) || (!s.free && s.change > 0) || s.fx ? h('div', { class: 'd', text:
+          [...(s.sets || []).map(x => `セット割「${x.name}」×${x.count}`),
+            !s.free && s.change > 0 ? `預かり ${yen(s.received)} / お釣り ${yen(s.change)}` : '',
+            s.fx ? `${CUR[s.fx.cur].name}払い: 預かり ${fmtCur(s.fx.received, s.fx.cur)} / お釣り ${fmtCur(s.fx.change, s.fx.cur)}(${yen(s.total)}・${CUR[s.fx.cur].per}${CUR[s.fx.cur].sym}=${+(s.fx.rate * CUR[s.fx.cur].per).toFixed(4)}円)` : ''].filter(Boolean).join(' ・ ') }) : null),
       h('button', { class: 'btn sub small', text: s.voided ? '復活' : '取消', onclick: () => {
         if (s.voided) setVoid(s.id, false);
         else if (confirm(`#${s.no} を取り消しますか?(在庫は元に戻り、集計から外れます)`)) setVoid(s.id, true);
@@ -649,26 +691,28 @@ function viewStats(st) {
   const totalStock = rows.reduce((a, r) => a + (r.rem == null ? 0 : r.rem), 0);
   return h('div', null,
     h('div', { class: 'kpis' },
-      h('div', { class: 'kpi wide' }, h('div', { class: 'k', text: '売上合計' }), h('div', { class: 'v', text: yen(st.revenue) })),
+      h('div', { class: 'kpi wide' }, h('div', { class: 'k', text: '売上合計' }), h('div', { class: 'v', text: money(st.revenue) })),
       h('div', { class: 'kpi' }, h('div', { class: 'k', text: '会計件数' }), h('div', { class: 'v', text: st.count + '件' })),
       h('div', { class: 'kpi' }, h('div', { class: 'k', text: '頒布数(売上分)' }), h('div', { class: 'v', text: st.sold + '点' })),
-      h('div', { class: 'kpi' }, h('div', { class: 'k', text: '客単価' }), h('div', { class: 'v', text: yen(avg) })),
+      h('div', { class: 'kpi' }, h('div', { class: 'k', text: '客単価' }), h('div', { class: 'v', text: money(avg) })),
       h('div', { class: 'kpi' }, h('div', { class: 'k', text: '献本数' }), h('div', { class: 'v', text: st.gift + '点' }))),
+    curNote(),
+    cashCard(st),
     trendCard(),
     h('div', { class: 'card' }, h('h3', { text: '商品別' }),
       h('table', null,
         h('thead', null, h('tr', null, ['商品', '単価', '頒布', '献本', '残', '売上'].map(t => h('th', { text: t })))),
         h('tbody', null, rows.map(r => h('tr', null,
           h('td', { text: r.name + (r.hidden ? '(非表示)' : '') }),
-          h('td', { text: r.unit == null ? '' : yen(r.unit) }),
+          h('td', { text: r.unit == null ? '' : money(r.unit) }),
           h('td', { text: r.sold }),
           h('td', { text: r.gift }),
           h('td', { class: r.rem == null ? '' : r.rem <= 0 ? 'zero' : r.rem <= 3 ? 'low' : '', text: r.rem == null ? '−' : r.rem }),
-          h('td', { text: yen(r.gross) })))),
+          h('td', { text: money(r.gross) })))),
         h('tfoot', null,
-          st.discount ? h('tr', null, h('td', { text: 'セット割引' }), h('td'), h('td'), h('td'), h('td'), h('td', { text: yen(-st.discount) })) : null,
+          st.discount ? h('tr', null, h('td', { text: 'セット割引' }), h('td'), h('td'), h('td'), h('td'), h('td', { text: money(-st.discount) })) : null,
           h('tr', null, h('td', { text: '合計' }), h('td'), h('td', { text: st.sold }), h('td', { text: st.gift }),
-            h('td', { text: rows.some(r => r.rem != null) ? totalStock : '−' }), h('td', { text: yen(st.revenue) }))))),
+            h('td', { text: rows.some(r => r.rem != null) ? totalStock : '−' }), h('td', { text: money(st.revenue) }))))),
     h('div', { class: 'card' }, h('h3', { text: '書き出し' }),
       h('div', { class: 'row wrap' },
         h('button', { class: 'btn small', text: '集計CSV', onclick: exportSummaryCSV }),
@@ -676,6 +720,23 @@ function viewStats(st) {
         h('button', { class: 'btn small', text: '時間別CSV', onclick: exportTrendCSV }),
         h('button', { class: 'btn small sub', text: 'バックアップ(JSON)', onclick: exportBackup })),
       h('div', { class: 'note', style: 'margin-top:8px', text: 'iPhoneでは共有シートが開きます。「"ファイル"に保存」で保存できます。' })));
+}
+// 円以外で表示しているときの注記(金額は円で記録し、表示だけ換算している)
+function curNote() {
+  const code = curCode();
+  if (code === 'JPY') return null;
+  const c = CUR[code];
+  return h('div', { class: 'note', style: 'margin:-4px 4px 12px', text: `金額は円で記録した値を${c.name}に換算して表示しています(${c.per}${c.sym} = ${+(rateOf(code) * c.per).toFixed(4)}円。レートを変えると、過去の分も換算し直されます)。` });
+}
+// 外貨で受け取った会計があるときだけ、通貨別の受取額を出す(レジの現金の突き合わせ用)
+function cashCard(st) {
+  const keys = Object.keys(st.cash);
+  if (!keys.some(k => k !== 'JPY')) return null;
+  return h('div', { class: 'card' }, h('h3', { text: '受け取った現金(通貨別)' }),
+    keys.sort((a, b) => (a === 'JPY' ? -1 : b === 'JPY' ? 1 : a.localeCompare(b))).map(k => h('div', { class: 'item' },
+      h('div', { class: 'main' }, h('div', { class: 't', text: CUR[k].name }), h('div', { class: 'd', text: `${st.cash[k].n}件(お釣りを引いた額)` })),
+      h('b', { text: k === 'JPY' ? yen(st.cash[k].amt) : fmtCur(st.cash[k].amt, k) }))),
+    h('div', { class: 'note', style: 'margin-top:6px', text: '売上合計は円で記録した値のまま、ここは実際に受け取った通貨ごとの合計です。レジの現金と突き合わせられます。' }));
 }
 function productRows(st) {
   const rows = S.products.map(p => {
@@ -738,8 +799,9 @@ document.addEventListener('pointerdown', e => { if (trendHide && !e.target.close
 
 function trendChart(d) {
   const isRev = trend.metric === 'rev', bar = trend.mode === 'bar';
-  const val = x => isRev ? x.rev : x.qty, cum = x => isRev ? x.cumRev : x.cumQty;
-  const fmt = v => isRev ? yen(v) : v + '点';
+  const code = curCode(), cv = y => code === 'JPY' ? y : toCur(y, code); // 売上は選択通貨に換算した値で描く
+  const val = x => isRev ? cv(x.rev) : x.qty, cum = x => isRev ? cv(x.cumRev) : x.cumQty;
+  const fmt = v => isRev ? fmtCur(code === 'JPY' ? v : roundCur(v, code), code) : v + '点';
   const multi = new Date(d.first).toDateString() !== new Date(d.last).toDateString();
   const tfmt = ts => { const t = new Date(ts); return (multi ? `${t.getMonth() + 1}/${t.getDate()} ` : '') + `${pad(t.getHours())}:${pad(t.getMinutes())}`; };
   const W = 330, H = 210, L = 46, R = 12, T = 22, B = 24, pw = W - L - R, ph = H - T - B, n = d.n;
@@ -750,7 +812,7 @@ function trendChart(d) {
     'aria-label': `${isRev ? '売上' : '頒布数'}の${bar ? '時間別' : '累計'}推移。${tfmt(d.first)}から${tfmt(d.last)}。詳しい数字は下の表でも確認できます` });
   for (let t = 0; t <= sc.top + 1e-9; t += sc.step) {
     svg.append(svgEl('line', { class: 'tc-grid', x1: L, x2: W - R, y1: y(t), y2: y(t) }),
-      svgEl('text', { class: 'tc-tx', x: L - 6, y: y(t) + 3.5, 'text-anchor': 'end' }, t.toLocaleString('ja-JP')));
+      svgEl('text', { class: 'tc-tx', x: L - 6, y: y(t) + 3.5, 'text-anchor': 'end' }, t.toLocaleString('ja-JP', { maximumFractionDigits: 2 })));
   }
   const k = Math.max(1, Math.ceil((multi ? 72 : 36) / (pw / n))); // 横軸の時刻ラベルが重ならない間引き
   for (let i = 0; i <= n; i += k) { // 右端の目盛りだけは右寄せにして、枠からはみ出さないようにする
@@ -832,11 +894,11 @@ function trendCard() {
   if (!d) { card.append(h('div', { class: 'note', text: 'まだ売上の記録がありません。会計が入ると、最初の会計から最後の会計までの推移が表示されます。' })); return card; }
 
   const val = x => isRev ? x.rev : x.qty, cum = x => isRev ? x.cumRev : x.cumQty;
-  const fmt = v => isRev ? yen(v) : v + '点';
+  const fmt = v => isRev ? money(v) : v + '点'; // ここの値は円(money が選択通貨に換算する)
   const multi = new Date(d.first).toDateString() !== new Date(d.last).toDateString();
   const tfmt = ts => { const t = new Date(ts); return (multi ? `${t.getMonth() + 1}/${t.getDate()} ` : '') + `${pad(t.getHours())}:${pad(t.getMinutes())}`; };
   const stepLabel = d.step >= 60 ? d.step / 60 + '時間' : d.step + '分';
-  card.append(h('div', { class: 'note', style: 'margin-bottom:2px', text: `${isRev ? '売上(円)' : '頒布数(点)'}・${stepLabel}ごと${trend.mode === 'cum' ? '・累計' : ''}` }), trendChart(d));
+  card.append(h('div', { class: 'note', style: 'margin-bottom:2px', text: `${isRev ? '売上(' + CUR[curCode()].name + ')' : '頒布数(点)'}・${stepLabel}ごと${trend.mode === 'cum' ? '・累計' : ''}` }), trendChart(d));
 
   const mins = Math.round((d.last - d.first) / 60000);
   let peak = d.b[0];
@@ -852,13 +914,13 @@ function trendCard() {
       h('thead', null, h('tr', null, ['時間帯', '件数', '頒布', '売上', '累計'].map(t => h('th', { text: t })))),
       h('tbody', null, d.b.map(x => h('tr', null,
         h('td', { text: `${tfmt(x.start)}〜${tfmt(x.end)}` }), h('td', { text: x.count }), h('td', { text: x.qty }),
-        h('td', { text: yen(x.rev) }), h('td', { text: isRev ? yen(x.cumRev) : x.cumQty + '点' })))))));
+        h('td', { text: money(x.rev) }), h('td', { text: isRev ? money(x.cumRev) : x.cumQty + '点' })))))));
   return card;
 }
 function exportTrendCSV() {
   const d = trendData();
   if (!d) { toast('売上の記録がありません'); return; }
-  const rows = [['開始', '終了', '会計件数', '頒布数', '売上', '累計件数', '累計頒布数', '累計売上']];
+  const rows = [['開始', '終了', '会計件数', '頒布数', '売上(円)', '累計件数', '累計頒布数', '累計売上(円)']];
   d.b.forEach(x => rows.push([fmtDT(x.start), fmtDT(x.end), x.count, x.qty, x.rev, x.cumCount, x.cumQty, x.cumRev]));
   exportFile(`${safeName(S.eventName)}_時間別_${stamp()}.csv`, toCSV(rows), 'text/csv');
 }
@@ -888,19 +950,21 @@ async function exportFile(name, text, mime) {
 }
 function exportSummaryCSV() {
   const st = stats();
-  const rows = [['商品名', '単価', '持ち込み数', '頒布数', '献本数', '残数', '売上(定価ベース)']];
+  const rows = [['商品名', '単価(円)', '持ち込み数', '頒布数', '献本数', '残数', '売上(定価ベース・円)']];
   productRows(st).forEach(r => rows.push([r.name, r.unit, r.stock == null ? '' : r.stock, r.sold, r.gift, r.rem == null ? '' : r.rem, r.gross]));
-  rows.push([], ['セット割引合計', '', '', '', '', '', -st.discount], ['売上合計', '', '', st.sold, st.gift, '', st.revenue], ['会計件数', st.count], ['取消件数', st.voided]);
+  rows.push([], ['セット割引合計(円)', '', '', '', '', '', -st.discount], ['売上合計(円)', '', '', st.sold, st.gift, '', st.revenue], ['会計件数', st.count], ['取消件数', st.voided]);
+  Object.keys(st.cash).filter(k => k !== 'JPY').forEach(k => rows.push([`受け取った現金(${CUR[k].name})`, st.cash[k].amt, `${st.cash[k].n}件`])); // 外貨で受け取った実額
   exportFile(`${safeName(S.eventName)}_集計_${stamp()}.csv`, toCSV(rows), 'text/csv');
 }
 function exportDetailCSV() {
   const st = stats();
   const cols = productRows(st);
-  const rows = [['会計No', '日時', '区分', '取消', ...cols.map(c => c.name), 'セット割', '割引額', '合計', '預かり', 'お釣り']];
+  const rows = [['会計No', '日時', '区分', '取消', ...cols.map(c => c.name), 'セット割', '割引額(円)', '合計(円)', '預かり(円)', 'お釣り(円)', '支払通貨', 'レート(円/1単位)', '外貨の請求額', '外貨の預かり', '外貨のお釣り']];
   S.sales.forEach(s => {
     const q = {}; s.lines.forEach(l => { q[l.pid] = (q[l.pid] || 0) + l.qty; });
     rows.push([s.no, fmtDT(s.ts), s.free ? '献本' : '販売', s.voided ? '取消' : '', ...cols.map(c => q[c.pid] || ''),
-      (s.sets || []).map(x => `${x.name}×${x.count}`).join(' / '), s.discount || 0, s.total, s.received, s.change]);
+      (s.sets || []).map(x => `${x.name}×${x.count}`).join(' / '), s.discount || 0, s.total, s.received, s.change,
+      ...(s.fx ? [s.fx.cur, s.fx.rate, s.fx.due, s.fx.received, s.fx.change] : ['', '', '', '', ''])]);
   });
   exportFile(`${safeName(S.eventName)}_明細_${stamp()}.csv`, toCSV(rows), 'text/csv');
 }
@@ -935,13 +999,14 @@ function viewSettings(st) {
     h('div', { class: 'card' },
       h('div', { class: 'field', style: 'margin:0' }, h('label', { text: 'イベント名(CSVのファイル名にも使います)' }),
         h('input', { type: 'text', value: S.eventName, placeholder: '例: 秋の例大祭', onchange: e => { S.eventName = e.target.value.trim(); save(); render(); } }))),
+    currencyCard(),
     h('div', { class: 'card' }, h('h3', { text: '商品' }),
       S.products.length ? S.products.map((p, i) => {
         const rem = remainingOf(p, st);
         return h('div', { class: 'item' + (p.hidden ? ' void' : '') },
           h('div', { class: 'main' },
             h('div', { class: 't', text: p.name }),
-            h('div', { class: 'd', text: `${yen(p.price)} ・ ` + (p.stock == null ? '在庫管理なし' : `持ち込み ${p.stock} / 残 ${rem}`) + (p.hidden ? ' ・ 非表示' : '') })),
+            h('div', { class: 'd', text: `${both(p.price)} ・ ` + (p.stock == null ? '在庫管理なし' : `持ち込み ${p.stock} / 残 ${rem}`) + (p.hidden ? ' ・ 非表示' : '') })),
           h('button', { class: 'btn sub small', text: '↑', disabled: i === 0, onclick: () => moveProd(i, -1) }),
           h('button', { class: 'btn sub small', text: '↓', disabled: i === S.products.length - 1, onclick: () => moveProd(i, 1) }),
           h('button', { class: 'btn small', text: '編集', onclick: () => openProductSheet(p) }));
@@ -951,7 +1016,7 @@ function viewSettings(st) {
       S.sets.length ? S.sets.map(s => h('div', { class: 'item' },
         h('div', { class: 'main' },
           h('div', { class: 't', text: s.name }),
-          h('div', { class: 'd', text: s.items.map(i => `${prodById(i.pid)?.name || '?'}×${i.qty}`).join(' + ') + ` → ${yen(s.price)}` })),
+          h('div', { class: 'd', text: s.items.map(i => `${prodById(i.pid)?.name || '?'}×${i.qty}`).join(' + ') + ` → ${both(s.price)}` })),
         h('button', { class: 'btn small', text: '編集', onclick: () => openSetSheet(s) })))
         : h('div', { class: 'note', text: 'カートの中身がセットの条件を満たすと、自動で割引されます。「新刊+既刊で○○円」「同じ本を3冊で○○円」など。' }),
       h('button', { class: 'btn block', style: 'margin-top:10px', text: '+ セット割を追加', disabled: S.products.length < 1, onclick: () => openSetSheet(null) })),
@@ -971,6 +1036,28 @@ function viewSettings(st) {
       h('hr', { style: 'border:0;border-top:1px solid var(--line);margin:14px 0' }),
       h('div', { class: 'note', text: '新しいイベントを始めるときは、先にCSVとバックアップを書き出してから会計データをリセットします(商品・セット設定は残ります)。' }),
       h('button', { class: 'btn danger small', style: 'margin-top:8px', text: '会計データをリセット', onclick: resetSales })));
+}
+function currencyCard() {
+  const cur = curCode();
+  const row = code => {
+    const c = CUR[code], r = rateOf(code), on = cur === code;
+    const rateIn = code === 'JPY' ? null : h('input', { type: 'number', inputMode: 'decimal', step: 'any', min: '0', value: r ? +(r * c.per).toFixed(4) : '', placeholder: 'レート',
+      style: 'width:92px', onchange: e => {
+        const v = parseFloat(e.target.value);
+        if (v > 0) S.rates[code] = Number((v / c.per).toPrecision(10)); else { delete S.rates[code]; if (S.currency === code) S.currency = 'JPY'; }
+        save(); render();
+      } });
+    return h('div', { class: 'item' },
+      h('div', { class: 'main' }, h('div', { class: 't', text: `${c.name}(${c.sym})` }),
+        code === 'JPY' ? h('div', { class: 'd', text: '基準の通貨(商品の価格は円で登録します)' })
+          : h('div', { class: 'row', style: 'margin-top:6px' }, h('span', { class: 'note', text: `${c.per}${c.sym} =` }), rateIn, h('span', { class: 'note', text: '円' }))),
+      on ? h('span', { class: 'tag', text: '使用中' })
+        : h('button', { class: 'btn small', text: '使う', disabled: code !== 'JPY' && !r, onclick: () => { S.currency = code; save(); render(); } }));
+  };
+  return h('div', { class: 'card' }, h('h3', { text: '表示する通貨' }),
+    h('div', { class: 'note', style: 'margin-bottom:6px', text: '選んだ通貨で、金額の表示と会計(預かり・お釣り)を行います。レートは自分で入力します(電波がなくても使えるよう、自動取得はしません)。商品の価格と売上は円で記録され、換算して表示します。' }),
+    Object.keys(CUR).map(row),
+    h('div', { class: 'note', style: 'margin-top:6px', text: '外貨のお支払いは、換算額を最小単位(' + CUR.USD.sym + '0.01 / ' + CUR.KRW.sym + '100 など)に丸めた額です。' }));
 }
 function resetSales() {
   if (!S.sales.length && !Object.keys(S.cart).length) { toast('リセットするデータがありません'); return; }
@@ -1245,7 +1332,7 @@ async function openQrSheet() {
       h('button', { class: 'btn small', text: '印刷', onclick: () => window.print() })),
     h('div', { class: 'qr-note noprint', text: '印刷してテーブルに置き、会計のたびに読み取ります。商品の下の英数字(P01など)が各QRの中身です。商品を追加したあとは、この画面を開き直してください。名前や価格を変えても、QRはそのまま使えます。' }),
     h('div', { class: 'qr-title', text: '商品' }),
-    h('div', { class: 'qr-grid' }, prods.map(p => card(qrOfProduct(p), p.name, yen(p.price), p.code))));
+    h('div', { class: 'qr-grid' }, prods.map(p => card(qrOfProduct(p), p.name, both(p.price), p.code))));
   document.body.append(sheet);
 }
 

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'hanpu-pos-v2';
+const CACHE_NAME = 'hanpu-pos-v3';
 const APP_SHELL = [
   './',
   './index.html',
