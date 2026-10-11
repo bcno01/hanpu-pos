@@ -202,7 +202,7 @@
 
   /* 時間別の推移グラフ */
   .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
-  .seg button { border: 0; background: var(--bg); padding: 7px 12px; font-size: 13px; font-weight: 700; color: var(--dim); }
+  .seg button { white-space: nowrap; border: 0; background: var(--bg); padding: 7px 12px; font-size: 13px; font-weight: 700; color: var(--dim); }
   .seg button.on { background: var(--accent); color: var(--accent-ink); }
   .tc-wrap { position: relative; max-width: 480px; margin: 4px auto 0; }
   .tc-wrap svg { display: block; width: 100%; height: auto; touch-action: pan-y; -webkit-user-select: none; user-select: none; }
@@ -751,7 +751,7 @@ function productRows(st) {
 
 /* ---- 時間別の推移 ---- */
 // 最初の会計から最後の会計までを、時計に揃えた間隔(15分・30分…)で区切って集計する
-const trend = { metric: 'rev', step: 30, mode: 'bar', tableOpen: false };
+const trend = { metric: 'rev', step: 30, mode: 'bar', tableOpen: false, day: null }; // day = 表示する日('YYYY-MM-DD')。未選択・該当なしなら最新の日
 const TREND_STEPS = [15, 30, 60, 120, 240];
 function alignDown(ts, stepMin) { // 時計の区切り(10:00, 10:30…)に切り下げる
   const d = new Date(ts);
@@ -760,9 +760,16 @@ function alignDown(ts, stepMin) { // 時計の区切り(10:00, 10:30…)に切�
   else { d.setMinutes(0); const hs = stepMin / 60; d.setHours(Math.floor(d.getHours() / hs) * hs); }
   return d.getTime();
 }
-function trendData() {
-  const sales = S.sales.filter(s => !s.voided && !s.free); // 取消・献本は含めない(売上・頒布数と同じ基準)
-  if (!sales.length) return null;
+const dayKey = ts => { const d = new Date(ts); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }; // 端末の日付(0時で区切る)
+const dayLabel = key => { const [y, m, d] = key.split('-').map(Number); return `${m}/${d}(${'日月火水木金土'[new Date(y, m - 1, d).getDay()]})`; };
+const trendSales = () => S.sales.filter(s => !s.voided && !s.free); // 取消・献本は含めない(売上・頒布数と同じ基準)
+const trendDays = () => [...new Set(trendSales().map(s => dayKey(s.ts)))].sort();
+// 日をまたぐと別々のグラフにする(累計も日ごとに0から)。day が無ければ選択中の日、それも無ければ最新の日
+function trendData(day) {
+  const days = trendDays();
+  if (!days.length) return null;
+  if (!days.includes(day)) day = days.includes(trend.day) ? trend.day : days[days.length - 1];
+  const sales = trendSales().filter(s => dayKey(s.ts) === day);
   let first = Infinity, last = -Infinity;
   sales.forEach(s => { if (s.ts < first) first = s.ts; if (s.ts > last) last = s.ts; });
   const countAt = st => Math.floor((last - alignDown(first, st)) / (st * 60000)) + 1;
@@ -776,7 +783,7 @@ function trendData() {
   }
   let cc = 0, cq = 0, cr = 0;
   b.forEach(x => { cc += x.count; cq += x.qty; cr += x.rev; x.cumCount = cc; x.cumQty = cq; x.cumRev = cr; });
-  return { b, step, start, ms, n, first, last };
+  return { b, step, start, ms, n, first, last, day, days };
 }
 function niceScale(max, integer) { // 目盛りをキリのいい数にする(0 / 1,000 / 2,000 …)
   if (!(max > 0)) return integer ? { top: 4, step: 1 } : { top: 1000, step: 250 };
@@ -802,8 +809,7 @@ function trendChart(d) {
   const code = curCode(), cv = y => code === 'JPY' ? y : toCur(y, code); // 売上は選択通貨に換算した値で描く
   const val = x => isRev ? cv(x.rev) : x.qty, cum = x => isRev ? cv(x.cumRev) : x.cumQty;
   const fmt = v => isRev ? fmtCur(code === 'JPY' ? v : roundCur(v, code), code) : v + '点';
-  const multi = new Date(d.first).toDateString() !== new Date(d.last).toDateString();
-  const tfmt = ts => { const t = new Date(ts); return (multi ? `${t.getMonth() + 1}/${t.getDate()} ` : '') + `${pad(t.getHours())}:${pad(t.getMinutes())}`; };
+  const tfmt = fmtTime;
   const W = 330, H = 210, L = 46, R = 12, T = 22, B = 24, pw = W - L - R, ph = H - T - B, n = d.n;
   const sc = niceScale(bar ? Math.max(...d.b.map(val)) : cum(d.b[n - 1]), !isRev);
   const y = v => T + ph - v / sc.top * ph;
@@ -814,7 +820,7 @@ function trendChart(d) {
     svg.append(svgEl('line', { class: 'tc-grid', x1: L, x2: W - R, y1: y(t), y2: y(t) }),
       svgEl('text', { class: 'tc-tx', x: L - 6, y: y(t) + 3.5, 'text-anchor': 'end' }, t.toLocaleString('ja-JP', { maximumFractionDigits: 2 })));
   }
-  const k = Math.max(1, Math.ceil((multi ? 72 : 36) / (pw / n))); // 横軸の時刻ラベルが重ならない間引き
+  const k = Math.max(1, Math.ceil(36 / (pw / n))); // 横軸の時刻ラベルが重ならない間引き
   for (let i = 0; i <= n; i += k) { // 右端の目盛りだけは右寄せにして、枠からはみ出さないようにする
     const last = i === n;
     svg.append(svgEl('text', { class: 'tc-tx', x: last ? W - 2 : bx(i), y: H - 6, 'text-anchor': last ? 'end' : 'middle' }, tfmt(d.start + i * d.ms)));
@@ -891,19 +897,22 @@ function trendCard() {
       seg([['rev', '売上'], ['qty', '頒布数']], trend.metric, v => { trend.metric = v; }),
       seg([[15, '15分'], [30, '30分'], [60, '1時間']], trend.step, v => { trend.step = v; }),
       seg([['bar', '時間ごと'], ['cum', '累計']], trend.mode, v => { trend.mode = v; })));
-  if (!d) { card.append(h('div', { class: 'note', text: 'まだ売上の記録がありません。会計が入ると、最初の会計から最後の会計までの推移が表示されます。' })); return card; }
+  if (!d) { card.append(h('div', { class: 'note', text: 'まだ売上の記録がありません。会計が入ると、最初の会計から最後の会計までの推移が表示されます(日をまたぐと、日ごとに切り替えて見られます)。' })); return card; }
 
   const val = x => isRev ? x.rev : x.qty, cum = x => isRev ? x.cumRev : x.cumQty;
   const fmt = v => isRev ? money(v) : v + '点'; // ここの値は円(money が選択通貨に換算する)
-  const multi = new Date(d.first).toDateString() !== new Date(d.last).toDateString();
-  const tfmt = ts => { const t = new Date(ts); return (multi ? `${t.getMonth() + 1}/${t.getDate()} ` : '') + `${pad(t.getHours())}:${pad(t.getMinutes())}`; };
+  const tfmt = fmtTime;
+  const manyDays = d.days.length > 1;
+  if (manyDays) card.children[0].after(h('div', { style: 'margin-bottom:8px;overflow-x:auto;scrollbar-width:none' }, // 日をまたいだら、日ごとに別のグラフにする
+    h('div', { class: 'seg' }, d.days.map((k, i) => h('button', { class: k === d.day ? 'on' : '', text: `${i + 1}日目 ${dayLabel(k)}`, onclick: () => { trend.day = k; render(); } })))));
   const stepLabel = d.step >= 60 ? d.step / 60 + '時間' : d.step + '分';
-  card.append(h('div', { class: 'note', style: 'margin-bottom:2px', text: `${isRev ? '売上(' + CUR[curCode()].name + ')' : '頒布数(点)'}・${stepLabel}ごと${trend.mode === 'cum' ? '・累計' : ''}` }), trendChart(d));
+  card.append(h('div', { class: 'note', style: 'margin-bottom:2px', text: `${manyDays ? dayLabel(d.day) + '・' : ''}${isRev ? '売上(' + CUR[curCode()].name + ')' : '頒布数(点)'}・${stepLabel}ごと${trend.mode === 'cum' ? '・累計' : ''}` }), trendChart(d));
 
   const mins = Math.round((d.last - d.first) / 60000);
   let peak = d.b[0];
   d.b.forEach(x => { if (val(x) > val(peak)) peak = x; });
   const facts = [`最初の会計 ${tfmt(d.first)} 〜 最後の会計 ${tfmt(d.last)}(${mins >= 60 ? Math.floor(mins / 60) + '時間' : ''}${mins % 60}分)`];
+  if (manyDays) { const t = d.b[d.n - 1]; facts.unshift(`この日の合計 ${money(t.cumRev)}・${t.cumCount}件・${t.cumQty}点`); }
   if (val(peak) > 0) facts.push(`いちばん売れた時間帯 ${tfmt(peak.start)}〜${tfmt(peak.end)}(${fmt(val(peak))}・${peak.count}件)`);
   if (d.step !== trend.step) facts.push(`会計の期間が長いため、${stepLabel}ごとにまとめています`);
   card.append(h('div', { class: 'tc-facts' }, facts.map(t => h('div', { text: t }))));
@@ -918,10 +927,13 @@ function trendCard() {
   return card;
 }
 function exportTrendCSV() {
-  const d = trendData();
-  if (!d) { toast('売上の記録がありません'); return; }
-  const rows = [['開始', '終了', '会計件数', '頒布数', '売上(円)', '累計件数', '累計頒布数', '累計売上(円)']];
-  d.b.forEach(x => rows.push([fmtDT(x.start), fmtDT(x.end), x.count, x.qty, x.rev, x.cumCount, x.cumQty, x.cumRev]));
+  const days = trendDays();
+  if (!days.length) { toast('売上の記録がありません'); return; }
+  const rows = [['日付', '開始', '終了', '会計件数', '頒布数', '売上(円)', '当日累計件数', '当日累計頒布数', '当日累計売上(円)']];
+  days.forEach(k => {
+    const d = trendData(k); // 日をまたぐ場合も、日ごとに区切る(累計は日ごとに0から)
+    d.b.forEach(x => rows.push([k, fmtDT(x.start), fmtDT(x.end), x.count, x.qty, x.rev, x.cumCount, x.cumQty, x.cumRev]));
+  });
   exportFile(`${safeName(S.eventName)}_時間別_${stamp()}.csv`, toCSV(rows), 'text/csv');
 }
 
